@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptToken, encryptToken } from "@/lib/security/crypto";
+import { extractInlineImagesForGraph } from "@/lib/email/templates";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 export const MICROSOFT_SCOPES = [
@@ -259,6 +260,8 @@ export interface SendMailAttachment {
   name: string;
   contentType: string;
   contentBytesBase64: string;
+  isInline?: boolean;
+  contentId?: string;
 }
 
 export async function sendOutlookMail(
@@ -270,23 +273,31 @@ export async function sendOutlookMail(
     attachments?: SendMailAttachment[];
   }
 ) {
+  const { htmlBody, inlineAttachments } = extractInlineImagesForGraph(input.htmlBody);
+  const allAttachments: SendMailAttachment[] = [
+    ...(input.attachments ?? []),
+    ...inlineAttachments,
+  ];
+
   const message: Record<string, unknown> = {
     subject: input.subject,
     body: {
       contentType: "HTML",
-      content: input.htmlBody,
+      content: htmlBody,
     },
     toRecipients: input.to.map((address) => ({
       emailAddress: { address: address.trim().toLowerCase() },
     })),
   };
 
-  if (input.attachments && input.attachments.length > 0) {
-    message.attachments = input.attachments.map((att) => ({
+  if (allAttachments.length > 0) {
+    message.attachments = allAttachments.map((att) => ({
       "@odata.type": "#microsoft.graph.fileAttachment",
       name: att.name,
       contentType: att.contentType,
       contentBytes: att.contentBytesBase64,
+      ...(att.isInline ? { isInline: true } : {}),
+      ...(att.contentId ? { contentId: att.contentId } : {}),
     }));
   }
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Calendar, CheckCircle2, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { SignatureEditor } from "@/components/settings/signature-editor";
 import type { Database } from "@/types/database";
 
 type OAuthConnectionPublic = Pick<
@@ -20,12 +21,14 @@ type OAuthConnectionPublic = Pick<
 
 interface IntegrationsSettingsProps {
   connection: OAuthConnectionPublic | null;
+  emailSignature?: string | null;
   outlookStatus?: string;
   outlookReason?: string;
 }
 
 export function IntegrationsSettings({
   connection,
+  emailSignature = null,
   outlookStatus,
   outlookReason,
 }: IntegrationsSettingsProps) {
@@ -175,6 +178,8 @@ export function IntegrationsSettings({
           </div>
         )}
       </div>
+
+      <SignatureEditor initialSignature={emailSignature} />
     </div>
   );
 }

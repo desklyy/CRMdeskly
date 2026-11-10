@@ -45,6 +45,7 @@ export type Database = {
           avatar_initials: string;
           role: UserRole;
           is_active: boolean;
+          email_signature: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -57,6 +58,7 @@ export type Database = {
           avatar_initials: string;
           role?: UserRole;
           is_active?: boolean;
+          email_signature?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -69,6 +71,7 @@ export type Database = {
           avatar_initials?: string;
           role?: UserRole;
           is_active?: boolean;
+          email_signature?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -747,6 +750,12 @@ export type Database = {
       };
       current_user_role: {
         Args: Record<string, never>;
+        Returns: string | null;
+      };
+      update_my_email_signature: {
+        Args: {
+          p_signature: string;
+        };
         Returns: string | null;
       };
     };

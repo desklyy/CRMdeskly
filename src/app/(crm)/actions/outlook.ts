@@ -5,7 +5,11 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { logUserActivity } from "@/lib/crm/activities";
 import { buildBillingSnapshot, type BillingSnapshot } from "@/lib/crm/quotes";
-import { buildOperationalQuestionnaireEmail } from "@/lib/email/templates";
+import {
+  appendSignatureToHtmlBody,
+  buildOperationalQuestionnaireEmail,
+  sanitizeSignatureHtml,
+} from "@/lib/email/templates";
 import { renderQuotePdfBuffer } from "@/lib/pdf/quote-pdf";
 import {
   createOutlookEvent,
@@ -213,10 +217,18 @@ export async function sendDealEmailAction(input: {
       Math.round((quote.subtotal - quote.discount_total) * 100) / 100;
   }
 
-  const htmlBody = input.bodyText
+  const rawHtmlBody = input.bodyText
     .split("\n")
     .map((line) => `<p>${line.replace(/</g, "&lt;").replace(/>/g, "&gt;") || "&nbsp;"}</p>`)
     .join("");
+
+  const { data: profileSig } = await supabase
+    .from("profiles")
+    .select("email_signature")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const htmlBody = appendSignatureToHtmlBody(rawHtmlBody, profileSig?.email_signature);
 
   try {
     await sendOutlookMail(user.id, {
@@ -240,7 +252,7 @@ export async function sendDealEmailAction(input: {
     microsoftEmail: outlook.microsoftEmail,
     toEmail,
     subject: input.subject.trim(),
-    preview: stripHtml(htmlBody),
+    preview: stripHtml(rawHtmlBody),
     hasAttachments: attachments.length > 0,
     contactId: input.contactId,
     companyId: input.companyId,
@@ -336,6 +348,31 @@ export async function sendQuestionnaireEmailAction(input: {
     toEmail,
     greetingName: contact.first_name?.trim() || "",
   };
+}
+
+export async function updateMyEmailSignatureAction(rawSignatureHtml: string) {
+  const { supabase } = await requireUser();
+  const sanitized = sanitizeSignatureHtml(rawSignatureHtml);
+
+  const { data, error } = await supabase.rpc("update_my_email_signature", {
+    p_signature: sanitized,
+  });
+
+  if (error) {
+    if (
+      error.message.includes("update_my_email_signature") ||
+      error.message.includes("email_signature")
+    ) {
+      return {
+        error:
+          "Falta aplicar la migración SQL 0006_profile_email_signature.sql en Supabase.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  revalidatePath("/settings");
+  return { data: data ?? null };
 }
 
 // ---------------------------------------------------------------------------

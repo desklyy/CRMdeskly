@@ -10,6 +10,95 @@ function escapeHtml(text: string): string {
 }
 
 /**
+ * Sanea HTML de firma personal eliminando scripts, iframes y handlers XSS,
+ * manteniendo formato enriquecido (negrita, cursiva, tamaño, color, tablas, enlaces e imágenes).
+ */
+export function sanitizeSignatureHtml(rawHtml: string): string {
+  const trimmed = rawHtml.trim();
+  if (!trimmed) return "";
+
+  let clean = trimmed
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
+    .replace(/<(iframe|object|embed|form|meta|link|base)[^>]*?>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(iframe|object|embed|form|meta|link|base)[^>]*?\/?>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, '$1=$2#$2')
+    .replace(
+      /(src)\s*=\s*(["'])\s*data:(?!image\/(?:png|jpeg|jpg|gif|webp);base64,)[\s\S]*?\2/gi,
+      ""
+    );
+
+  // Si solo es texto sin HTML visible, comprobar que no esté vacío tras limpiar etiquetas vacías
+  const textOnly = clean
+    .replace(/<img\b[^>]*>/gi, "img")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .trim();
+  if (!textOnly) return "";
+
+  // Si no contiene tags HTML, convertir saltos de línea a <br />
+  if (!/<[a-z][\s\S]*>/i.test(clean)) {
+    clean = escapeHtml(clean).replace(/\r?\n/g, "<br />");
+  }
+
+  return clean;
+}
+
+/**
+ * Añade la firma HTML del usuario al final del cuerpo de un correo HTML.
+ */
+export function appendSignatureToHtmlBody(
+  bodyHtml: string,
+  signatureHtml?: string | null
+): string {
+  if (!signatureHtml) return bodyHtml;
+  const safeSig = sanitizeSignatureHtml(signatureHtml);
+  if (!safeSig) return bodyHtml;
+
+  return `${bodyHtml}<div style="margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.5;color:#334155;">${safeSig}</div>`;
+}
+
+export interface InlineGraphAttachment {
+  name: string;
+  contentType: string;
+  contentBytesBase64: string;
+  isInline: true;
+  contentId: string;
+}
+
+/**
+ * Extrae imágenes embebidas `data:image/...;base64,...` de un HTML y las convierte
+ * en adjuntos inline CID compatibles con Microsoft Graph (`/me/sendMail`).
+ */
+export function extractInlineImagesForGraph(html: string): {
+  htmlBody: string;
+  inlineAttachments: InlineGraphAttachment[];
+} {
+  const inlineAttachments: InlineGraphAttachment[] = [];
+  let counter = 0;
+
+  const htmlBody = html.replace(
+    /src=(["'])data:(image\/(?:png|jpeg|jpg|gif|webp));base64,([A-Za-z0-9+/=]+)\1/gi,
+    (_full, quote: string, mime: string, base64: string) => {
+      const idx = counter++;
+      const ext = mime.split("/")[1]?.replace("jpeg", "jpg") || "png";
+      const contentId = `deskly-sig-${idx}@crm`;
+      inlineAttachments.push({
+        name: `signature-${idx}.${ext}`,
+        contentType: mime.toLowerCase(),
+        contentBytesBase64: base64,
+        isInline: true,
+        contentId,
+      });
+      return `src=${quote}cid:${contentId}${quote}`;
+    }
+  );
+
+  return { htmlBody, inlineAttachments };
+}
+
+/**
  * Construye el correo HTML de "Cuestionario Operativo Deskly" a partir de la
  * plantilla oficial (.oft), personalizando el saludo con el nombre del contacto.
  */

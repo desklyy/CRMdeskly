@@ -36,6 +36,7 @@ interface SettingsViewProps {
   definitions: CustomFieldDefinition[];
   oauthConnection: OAuthConnectionPublic | null;
   apiKeys: ApiKeyPublicRow[];
+  emailSignature: string | null;
   outlookStatus?: string;
   outlookReason?: string;
 }
@@ -49,6 +50,7 @@ export function SettingsView({
   definitions,
   oauthConnection,
   apiKeys,
+  emailSignature,
   outlookStatus,
   outlookReason,
 }: SettingsViewProps) {
@@ -113,6 +115,7 @@ export function SettingsView({
       {activeTab === "integrations" && (
         <IntegrationsSettings
           connection={oauthConnection}
+          emailSignature={emailSignature}
           outlookStatus={outlookStatus}
           outlookReason={outlookReason}
         />
