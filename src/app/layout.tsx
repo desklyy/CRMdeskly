@@ -3,8 +3,20 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Deskly CRM",
-  description:
-    "Plataforma CRM comercial interna de Deskly orientada a variables estructuradas e IA.",
+  description: "Acceso privado.",
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+      "max-video-preview": -1,
+      "max-image-preview": "none",
+      "max-snippet": -1,
+    },
+  },
 };
 
 export default function RootLayout({
