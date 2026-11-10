@@ -694,7 +694,11 @@ export function DealSlideOver({
                         <span className="font-medium text-slate-900">
                           {em.subject ?? "(Sin asunto)"}
                         </span>
-                        <Badge>{em.direction}</Badge>
+                        <Badge
+                          variant={em.direction === "inbound" ? "success" : "brand"}
+                        >
+                          {em.direction === "inbound" ? "Entrante" : "Saliente"}
+                        </Badge>
                       </div>
                       <p className="mt-1 text-slate-500">{em.body_preview ?? ""}</p>
                     </button>
