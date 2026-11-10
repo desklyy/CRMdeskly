@@ -7,7 +7,7 @@ import {
   Droppable,
   type DropResult,
 } from "@hello-pangea/dnd";
-import { Archive, GripVertical, Plus, Star } from "lucide-react";
+import { Archive, Check, GripVertical, Pencil, Plus, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +49,17 @@ export function PipelineBuilder({
   const [stageWon, setStageWon] = useState(false);
   const [stageLost, setStageLost] = useState(false);
   const [creatingStage, setCreatingStage] = useState(false);
+
+  // Edit stage form
+  const [editingStageId, setEditingStageId] = useState<string | null>(null);
+  const [editStageName, setEditStageName] = useState("");
+  const [editStageColor, setEditStageColor] = useState("#3b82f6");
+  const [editStageProb, setEditStageProb] = useState("0");
+  const [editStageStaleOverride, setEditStageStaleOverride] = useState("");
+  const [editStageWon, setEditStageWon] = useState(false);
+  const [editStageLost, setEditStageLost] = useState(false);
+  const [savingStage, setSavingStage] = useState(false);
+  const [stageError, setStageError] = useState<string | null>(null);
 
   // Migration modal
   const [migrationPrompt, setMigrationPrompt] = useState<{
@@ -139,6 +150,7 @@ export function PipelineBuilder({
   }
 
   async function handleArchiveStage(stage: StageRow) {
+    setStageError(null);
     const res = await archiveStageWithMigrationAction({ stageId: stage.id });
     if ("requiresMigration" in res && res.requiresMigration) {
       const fallbackTarget = activeStages.find((s) => s.id !== stage.id);
@@ -152,6 +164,53 @@ export function PipelineBuilder({
 
     if ("data" in res && res.data) {
       setStages((prev) => prev.map((s) => (s.id === stage.id ? res.data! : s)));
+      if (editingStageId === stage.id) {
+        setEditingStageId(null);
+      }
+    }
+  }
+
+  function startEditingStage(stage: StageRow) {
+    setStageError(null);
+    setEditingStageId(stage.id);
+    setEditStageName(stage.name);
+    setEditStageColor(stage.color_code);
+    setEditStageProb(String(stage.probability));
+    setEditStageStaleOverride(
+      stage.stale_days_override !== null ? String(stage.stale_days_override) : ""
+    );
+    setEditStageWon(stage.is_won_stage);
+    setEditStageLost(stage.is_lost_stage);
+  }
+
+  async function handleSaveStage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingStageId || !editStageName.trim()) return;
+    setSavingStage(true);
+    setStageError(null);
+    try {
+      const res = await updateStageAction(editingStageId, {
+        name: editStageName.trim(),
+        color_code: editStageColor,
+        probability: Number(editStageProb) || 0,
+        stale_days_override: editStageStaleOverride.trim()
+          ? Number(editStageStaleOverride)
+          : null,
+        is_won_stage: editStageWon,
+        is_lost_stage: editStageLost,
+      });
+
+      if (res.error) {
+        setStageError(res.error);
+        return;
+      }
+
+      if (res.data) {
+        setStages((prev) => prev.map((s) => (s.id === res.data!.id ? res.data! : s)));
+        setEditingStageId(null);
+      }
+    } finally {
+      setSavingStage(false);
     }
   }
 
@@ -277,70 +336,187 @@ export function PipelineBuilder({
                   {...provided.droppableProps}
                   className="space-y-2"
                 >
-                  {activeStages.map((stage, index) => (
-                    <Draggable key={stage.id} draggableId={stage.id} index={index}>
-                      {(dragProvided) => (
-                        <div
-                          ref={dragProvided.innerRef}
-                          {...dragProvided.draggableProps}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs"
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <span
-                              {...dragProvided.dragHandleProps}
-                              className="cursor-grab text-slate-400 hover:text-slate-700"
-                            >
-                              <GripVertical className="h-4 w-4" />
-                            </span>
-                            <input
-                              type="color"
-                              value={stage.color_code}
-                              onChange={(e) => {
-                                const color = e.target.value;
-                                setStages((prev) =>
-                                  prev.map((s) =>
-                                    s.id === stage.id ? { ...s, color_code: color } : s
-                                  )
-                                );
-                                void updateStageAction(stage.id, { color_code: color });
-                              }}
-                              className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
-                            />
-                            <span className="font-medium text-slate-900">
-                              {stage.name}
-                            </span>
-                            <Badge>{stage.probability}%</Badge>
-                            {stage.stale_days_override !== null && (
-                              <Badge variant="warning">
-                                {stage.stale_days_override}d estanc.
-                              </Badge>
-                            )}
-                            {stage.is_won_stage && <Badge variant="success">Ganado</Badge>}
-                            {stage.is_lost_stage && (
-                              <Badge variant="destructive">Perdido</Badge>
+                  {activeStages.map((stage, index) => {
+                    const isEditing = editingStageId === stage.id;
+                    return (
+                      <Draggable key={stage.id} draggableId={stage.id} index={index}>
+                        {(dragProvided) => (
+                          <div
+                            ref={dragProvided.innerRef}
+                            {...dragProvided.draggableProps}
+                            className="rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-xs"
+                          >
+                            {isEditing ? (
+                              <form onSubmit={handleSaveStage} className="space-y-2.5">
+                                <div className="grid gap-2 sm:grid-cols-[24px_1fr_64px_86px_104px_auto]">
+                                  <span
+                                    {...dragProvided.dragHandleProps}
+                                    className="flex cursor-grab items-center justify-center text-slate-400 hover:text-slate-700"
+                                  >
+                                    <GripVertical className="h-4 w-4" />
+                                  </span>
+                                  <Input
+                                    required
+                                    placeholder="Nombre de la etapa"
+                                    value={editStageName}
+                                    onChange={(e) => setEditStageName(e.target.value)}
+                                  />
+                                  <Input
+                                    type="color"
+                                    value={editStageColor}
+                                    onChange={(e) => setEditStageColor(e.target.value)}
+                                    className="p-1"
+                                  />
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    placeholder="% Prob"
+                                    title="Probabilidad (%)"
+                                    value={editStageProb}
+                                    onChange={(e) => setEditStageProb(e.target.value)}
+                                  />
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    placeholder="Días est."
+                                    title="Días de estancamiento (vacío = usar defecto del pipeline)"
+                                    value={editStageStaleOverride}
+                                    onChange={(e) =>
+                                      setEditStageStaleOverride(e.target.value)
+                                    }
+                                  />
+                                  <div className="flex items-center gap-1.5">
+                                    <Button
+                                      type="submit"
+                                      size="sm"
+                                      disabled={savingStage}
+                                    >
+                                      <Check className="h-3.5 w-3.5" />
+                                      {savingStage ? "Guardando..." : "Guardar"}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setEditingStageId(null)}
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                      Cancelar
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-4 pl-8 text-xs text-[#334155]">
+                                  <label className="flex items-center gap-1.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={editStageWon}
+                                      onChange={(e) => {
+                                        setEditStageWon(e.target.checked);
+                                        if (e.target.checked) setEditStageLost(false);
+                                      }}
+                                    />
+                                    Etapa de cierre ganado
+                                  </label>
+                                  <label className="flex items-center gap-1.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={editStageLost}
+                                      onChange={(e) => {
+                                        setEditStageLost(e.target.checked);
+                                        if (e.target.checked) setEditStageWon(false);
+                                      }}
+                                    />
+                                    Etapa de cierre perdido
+                                  </label>
+                                </div>
+                              </form>
+                            ) : (
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5">
+                                  <span
+                                    {...dragProvided.dragHandleProps}
+                                    className="cursor-grab text-slate-400 hover:text-slate-700"
+                                  >
+                                    <GripVertical className="h-4 w-4" />
+                                  </span>
+                                  <input
+                                    type="color"
+                                    value={stage.color_code}
+                                    onChange={(e) => {
+                                      const color = e.target.value;
+                                      setStages((prev) =>
+                                        prev.map((s) =>
+                                          s.id === stage.id
+                                            ? { ...s, color_code: color }
+                                            : s
+                                        )
+                                      );
+                                      void updateStageAction(stage.id, {
+                                        color_code: color,
+                                      });
+                                    }}
+                                    className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+                                  />
+                                  <span className="font-semibold text-[#0F172A]">
+                                    {stage.name}
+                                  </span>
+                                  <Badge>{stage.probability}%</Badge>
+                                  {stage.stale_days_override !== null && (
+                                    <Badge variant="warning">
+                                      {stage.stale_days_override}d estanc.
+                                    </Badge>
+                                  )}
+                                  {stage.is_won_stage && (
+                                    <Badge variant="success">Ganado</Badge>
+                                  )}
+                                  {stage.is_lost_stage && (
+                                    <Badge variant="destructive">Perdido</Badge>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => startEditingStage(stage)}
+                                    title="Editar etapa"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    Editar
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={activeStages.length <= 1}
+                                    onClick={() => void handleArchiveStage(stage)}
+                                    title="Archivar etapa"
+                                  >
+                                    <Archive className="h-3.5 w-3.5" />
+                                    Archivar
+                                  </Button>
+                                </div>
+                              </div>
                             )}
                           </div>
-
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            disabled={activeStages.length <= 1}
-                            onClick={() => void handleArchiveStage(stage)}
-                            title="Archivar etapa"
-                          >
-                            <Archive className="h-3.5 w-3.5" />
-                            Archivar
-                          </Button>
-                        </div>
-                      )}
-                    </Draggable>
-                  ))}
+                        )}
+                      </Draggable>
+                    );
+                  })}
                   {provided.placeholder}
                 </div>
               )}
             </Droppable>
           </DragDropContext>
+
+          {stageError && (
+            <div className="rounded-[4px] border border-[#E2E8F0] border-l-[3px] border-l-red-600 bg-[#F8FAFC] p-3 text-xs text-red-700">
+              {stageError}
+            </div>
+          )}
 
           {/* Add stage */}
           <form

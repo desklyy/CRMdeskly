@@ -288,9 +288,34 @@ export async function createStageAction(input: {
 
 export async function updateStageAction(stageId: string, patch: StageUpdate) {
   const { supabase } = await requireAdmin();
+  const sanitized: StageUpdate = { ...patch };
+
+  if (sanitized.name !== undefined) {
+    const trimmed = sanitized.name.trim();
+    if (!trimmed) return { error: "El nombre de la etapa es obligatorio." };
+    sanitized.name = trimmed;
+  }
+
+  if (sanitized.probability !== undefined) {
+    sanitized.probability = Math.min(100, Math.max(0, Number(sanitized.probability) || 0));
+  }
+
+  if (sanitized.stale_days_override !== undefined && sanitized.stale_days_override !== null) {
+    sanitized.stale_days_override = Math.max(
+      1,
+      Math.floor(Number(sanitized.stale_days_override) || 1)
+    );
+  }
+
+  if (sanitized.is_won_stage) {
+    sanitized.is_lost_stage = false;
+  } else if (sanitized.is_lost_stage) {
+    sanitized.is_won_stage = false;
+  }
+
   const { data, error } = await supabase
     .from("pipeline_stages")
-    .update(patch)
+    .update(sanitized)
     .eq("id", stageId)
     .select("*")
     .single();
