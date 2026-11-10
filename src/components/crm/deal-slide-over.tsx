@@ -10,6 +10,12 @@ import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
 import { QuoteBuilder } from "@/components/crm/quote-builder";
+import {
+  QuestionnaireFeedbackArea,
+  SendQuestionnaireButton,
+  useSendQuestionnaire,
+  type QuestionnaireRecipientOption,
+} from "@/components/crm/questionnaire-sender";
 import { formatCurrencyEUR, type CustomFieldDefinition } from "@/lib/crm/custom-fields";
 import { LOST_REASONS, type DealRow, type StageRow } from "@/lib/crm/deals";
 import {
@@ -118,6 +124,55 @@ export function DealSlideOver({
   const [meetingEnd, setMeetingEnd] = useState("11:30");
   const [schedulingMeeting, setSchedulingMeeting] = useState(false);
   const [meetingFeedback, setMeetingFeedback] = useState<string | null>(null);
+
+  const dealRecipients: QuestionnaireRecipientOption[] = React.useMemo(() => {
+    if (!deal) return [];
+    const seen = new Set<string>();
+    const list: QuestionnaireRecipientOption[] = [];
+    const pushIfNew = (c: QuestionnaireRecipientOption | undefined) => {
+      if (!c || seen.has(c.id)) return;
+      seen.add(c.id);
+      list.push(c);
+    };
+
+    if (deal.primary_contact_id) {
+      pushIfNew(contacts.find((c) => c.id === deal.primary_contact_id));
+    }
+    for (const dc of dealContacts) {
+      pushIfNew({
+        id: dc.contact_id,
+        first_name: dc.first_name,
+        last_name: dc.last_name,
+        email: dc.email,
+      });
+    }
+    if (deal.company_id) {
+      for (const c of contacts) {
+        if (c.company_id === deal.company_id) pushIfNew(c);
+      }
+    }
+    return list;
+  }, [deal, contacts, dealContacts]);
+
+  const questionnaire = useSendQuestionnaire({
+    entityType: "deal",
+    entityId: deal?.id ?? "",
+    recipients: dealRecipients,
+    preferredContactId: deal?.primary_contact_id ?? null,
+    companyId: deal?.company_id ?? null,
+    dealId: deal?.id ?? null,
+    onSent: ({ emailRow }) => {
+      if (emailRow) {
+        setEmails((prev) => [emailRow, ...prev]);
+      }
+      if (deal) {
+        onDealUpdated({ ...deal, last_activity_at: new Date().toISOString() });
+        void getDealDetailsAction(deal.id).then((res) => {
+          setActivities(res.activities);
+        });
+      }
+    },
+  });
 
   useEffect(() => {
     if (!deal) return;
@@ -261,21 +316,28 @@ export function DealSlideOver({
       title={deal.title}
       subtitle={`${formatCurrencyEUR(deal.amount)} · Estado: ${deal.status.toUpperCase()}`}
       headerActions={
-        currentUserRole === "admin" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={deleting}
-            onClick={() => void handleDelete()}
-            title="Eliminar negocio (solo Admin)"
-            className="text-slate-400 hover:text-red-600"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        ) : undefined
+        <>
+          <SendQuestionnaireButton
+            sending={questionnaire.sending}
+            onClick={questionnaire.trigger}
+          />
+          {currentUserRole === "admin" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={deleting}
+              onClick={() => void handleDelete()}
+              title="Eliminar negocio (solo Admin)"
+              className="text-slate-400 hover:text-red-600"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </>
       }
     >
+      <QuestionnaireFeedbackArea state={questionnaire} />
       {/* Tabs */}
       <div className="mb-5 flex flex-wrap gap-1 border-b border-[#E2E8F0] pb-2">
         {TABS.map((t) => (

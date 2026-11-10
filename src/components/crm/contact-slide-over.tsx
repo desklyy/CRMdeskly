@@ -8,6 +8,11 @@ import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
 import {
+  QuestionnaireFeedbackArea,
+  SendQuestionnaireButton,
+  useSendQuestionnaire,
+} from "@/components/crm/questionnaire-sender";
+import {
   CONTACT_DEPARTMENTS,
   CONTACT_LEAD_STATUSES,
 } from "@/lib/crm/contacts";
@@ -68,6 +73,19 @@ export function ContactSlideOver({
   const [editingOtherDept, setEditingOtherDept] = useState(false);
   const [customDeptDraft, setCustomDeptDraft] = useState("");
   const [deptSavedFlash, setDeptSavedFlash] = useState(false);
+
+  const questionnaire = useSendQuestionnaire({
+    entityType: "contact",
+    entityId: contact?.id ?? "",
+    recipients: contact ? [contact] : [],
+    preferredContactId: contact?.id ?? null,
+    companyId: contact?.company_id ?? null,
+    onSent: () => {
+      if (contact) {
+        void getContactActivitiesAction(contact.id).then(setActivities);
+      }
+    },
+  });
 
   useEffect(() => {
     if (!contact) return;
@@ -164,21 +182,28 @@ export function ContactSlideOver({
       title={fullName}
       subtitle={`${contact.email ?? contact.job_title ?? "Contacto"} · ${contact.lead_status}`}
       headerActions={
-        currentUserRole === "admin" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={deleting}
-            onClick={() => void handleDelete()}
-            title="Eliminar contacto (solo Admin)"
-            className="text-[#64748B] hover:text-red-600"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        ) : undefined
+        <>
+          <SendQuestionnaireButton
+            sending={questionnaire.sending}
+            onClick={questionnaire.trigger}
+          />
+          {currentUserRole === "admin" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={deleting}
+              onClick={() => void handleDelete()}
+              title="Eliminar contacto (solo Admin)"
+              className="text-[#64748B] hover:text-red-600"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </>
       }
     >
+      <QuestionnaireFeedbackArea state={questionnaire} />
       <div className="space-y-6">
         {/* Identidad */}
         <div className="space-y-1.5">

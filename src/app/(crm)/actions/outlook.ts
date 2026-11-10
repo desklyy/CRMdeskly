@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { logUserActivity } from "@/lib/crm/activities";
 import { buildBillingSnapshot, type BillingSnapshot } from "@/lib/crm/quotes";
+import { buildOperationalQuestionnaireEmail } from "@/lib/email/templates";
 import { renderQuotePdfBuffer } from "@/lib/pdf/quote-pdf";
 import {
   createOutlookEvent,
@@ -15,7 +16,7 @@ import {
   updateOutlookEvent,
   type GraphEvent,
 } from "@/lib/microsoft/graph";
-import type { Database, Json } from "@/types/database";
+import type { ActivityEntityType, Database, Json } from "@/types/database";
 
 type CalendarLinkRow = Database["public"]["Tables"]["calendar_event_links"]["Row"];
 
@@ -30,6 +31,98 @@ async function requireUser() {
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function requireConnectedOutlook(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+) {
+  const { data: conn } = await supabase
+    .from("oauth_connections")
+    .select("microsoft_email, is_auth_invalid")
+    .eq("user_id", userId)
+    .eq("provider", "microsoft")
+    .maybeSingle();
+
+  if (!conn) {
+    return { error: "Conecta tu cuenta de Outlook en Settings > Integraciones primero." } as const;
+  }
+  if (conn.is_auth_invalid) {
+    return { error: "Conexión con Outlook pausada. Vuelve a autenticarte." } as const;
+  }
+
+  return { microsoftEmail: conn.microsoft_email } as const;
+}
+
+async function recordOutboundEmailAndActivity(input: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  userId: string;
+  microsoftEmail: string;
+  toEmail: string;
+  subject: string;
+  preview: string;
+  hasAttachments: boolean;
+  contactId: string;
+  companyId: string | null;
+  dealId: string | null;
+  quoteId?: string | null;
+  syncedBaseAmount?: number | null;
+  activityEntityType: ActivityEntityType;
+  activityEntityId: string;
+  eventType: string;
+  extraMetadata?: Record<string, Json>;
+}) {
+  const now = new Date().toISOString();
+  const syntheticGraphId = `crm-sent-${crypto.randomUUID()}`;
+
+  const { data: emailRow } = await input.supabase
+    .from("emails")
+    .insert({
+      ms_graph_id: syntheticGraphId,
+      user_id: input.userId,
+      contact_id: input.contactId,
+      deal_id: input.dealId,
+      quote_id: input.quoteId ?? null,
+      from_email: input.microsoftEmail,
+      to_emails: [input.toEmail] as Json,
+      subject: input.subject,
+      body_preview: input.preview.slice(0, 500),
+      direction: "outbound",
+      has_attachments: input.hasAttachments,
+      sent_at: now,
+    })
+    .select("*")
+    .single();
+
+  if (input.dealId) {
+    await input.supabase
+      .from("deals")
+      .update({
+        last_activity_at: now,
+        ...(input.syncedBaseAmount !== undefined && input.syncedBaseAmount !== null
+          ? { amount: input.syncedBaseAmount }
+          : {}),
+      })
+      .eq("id", input.dealId);
+  }
+
+  await logUserActivity({
+    supabase: input.supabase,
+    actorId: input.userId,
+    entityType: input.activityEntityType,
+    entityId: input.activityEntityId,
+    companyId: input.companyId,
+    contactId: input.contactId,
+    dealId: input.dealId,
+    eventType: input.eventType,
+    metadata: {
+      to_email: input.toEmail,
+      subject: input.subject,
+      ...(input.extraMetadata ?? {}),
+    },
+  });
+
+  return emailRow;
 }
 
 export async function sendDealEmailAction(input: {
@@ -51,18 +144,9 @@ export async function sendDealEmailAction(input: {
     return { error: "El negocio necesita un contacto principal para registrar el email." };
   }
 
-  const { data: conn } = await supabase
-    .from("oauth_connections")
-    .select("microsoft_email, is_auth_invalid")
-    .eq("user_id", user.id)
-    .eq("provider", "microsoft")
-    .maybeSingle();
-
-  if (!conn) {
-    return { error: "Conecta tu cuenta de Outlook en Settings > Integraciones primero." };
-  }
-  if (conn.is_auth_invalid) {
-    return { error: "Conexión con Outlook pausada. Vuelve a autenticarte." };
+  const outlook = await requireConnectedOutlook(supabase, user.id);
+  if ("error" in outlook) {
+    return { error: outlook.error };
   }
 
   const attachments: {
@@ -150,55 +234,108 @@ export async function sendDealEmailAction(input: {
     };
   }
 
-  const now = new Date().toISOString();
-  const syntheticGraphId = `crm-sent-${crypto.randomUUID()}`;
-  const preview = stripHtml(htmlBody).slice(0, 500);
-
-  const { data: emailRow } = await supabase
-    .from("emails")
-    .insert({
-      ms_graph_id: syntheticGraphId,
-      user_id: user.id,
-      contact_id: input.contactId,
-      deal_id: input.dealId,
-      quote_id: input.quoteId ?? null,
-      from_email: conn.microsoft_email,
-      to_emails: [toEmail] as Json,
-      subject: input.subject.trim(),
-      body_preview: preview,
-      direction: "outbound",
-      has_attachments: attachments.length > 0,
-      sent_at: now,
-    })
-    .select("*")
-    .single();
-
-  await supabase
-    .from("deals")
-    .update({
-      last_activity_at: now,
-      ...(syncedBaseAmount !== null ? { amount: syncedBaseAmount } : {}),
-    })
-    .eq("id", input.dealId);
-
-  await logUserActivity({
+  const emailRow = await recordOutboundEmailAndActivity({
     supabase,
-    actorId: user.id,
-    entityType: quoteNumberForLog ? "quote" : "deal",
-    entityId: input.quoteId ?? input.dealId,
-    companyId: input.companyId,
+    userId: user.id,
+    microsoftEmail: outlook.microsoftEmail,
+    toEmail,
+    subject: input.subject.trim(),
+    preview: stripHtml(htmlBody),
+    hasAttachments: attachments.length > 0,
     contactId: input.contactId,
+    companyId: input.companyId,
     dealId: input.dealId,
+    quoteId: input.quoteId ?? null,
+    syncedBaseAmount,
+    activityEntityType: quoteNumberForLog ? "quote" : "deal",
+    activityEntityId: input.quoteId ?? input.dealId,
     eventType: quoteNumberForLog ? "quote_sent" : "email_sent",
-    metadata: {
-      to_email: toEmail,
-      subject: input.subject.trim(),
-      ...(quoteNumberForLog ? { quote_number: quoteNumberForLog } : {}),
-    },
+    extraMetadata: quoteNumberForLog ? { quote_number: quoteNumberForLog } : undefined,
   });
 
   revalidatePath("/pipelines");
   return { data: emailRow, syncedBaseAmount };
+}
+
+export async function sendQuestionnaireEmailAction(input: {
+  contactId: string;
+  companyId?: string | null;
+  dealId?: string | null;
+  entityType: Extract<ActivityEntityType, "deal" | "company" | "contact">;
+  entityId: string;
+}) {
+  const { supabase, user } = await requireUser();
+
+  const { data: contact } = await supabase
+    .from("contacts")
+    .select("id, first_name, last_name, email, company_id")
+    .eq("id", input.contactId)
+    .maybeSingle();
+
+  if (!contact) {
+    return { error: "Contacto no encontrado." };
+  }
+
+  const toEmail = contact.email?.trim().toLowerCase();
+  if (!toEmail) {
+    return { error: "El contacto seleccionado no tiene email asignado." };
+  }
+
+  const outlook = await requireConnectedOutlook(supabase, user.id);
+  if ("error" in outlook) {
+    return { error: outlook.error };
+  }
+
+  const { subject, htmlBody, textPreview } = buildOperationalQuestionnaireEmail(
+    contact.first_name
+  );
+
+  try {
+    await sendOutlookMail(user.id, {
+      to: [toEmail],
+      subject,
+      htmlBody,
+    });
+  } catch (err) {
+    if (err instanceof OutlookAuthInvalidError) {
+      return { error: err.message, authInvalid: true };
+    }
+    return {
+      error:
+        err instanceof Error ? err.message : "Error enviando el cuestionario por Outlook.",
+    };
+  }
+
+  const emailRow = await recordOutboundEmailAndActivity({
+    supabase,
+    userId: user.id,
+    microsoftEmail: outlook.microsoftEmail,
+    toEmail,
+    subject,
+    preview: textPreview,
+    hasAttachments: false,
+    contactId: contact.id,
+    companyId: input.companyId ?? contact.company_id ?? null,
+    dealId: input.dealId ?? null,
+    activityEntityType: input.entityType,
+    activityEntityId: input.entityId,
+    eventType: "email_sent",
+    extraMetadata: {
+      template: "cuestionario_operativo",
+      greeting_name: contact.first_name,
+    },
+  });
+
+  revalidatePath("/pipelines");
+  revalidatePath("/contacts");
+  revalidatePath("/companies");
+  revalidatePath("/");
+
+  return {
+    data: emailRow,
+    toEmail,
+    greetingName: contact.first_name?.trim() || "",
+  };
 }
 
 // ---------------------------------------------------------------------------

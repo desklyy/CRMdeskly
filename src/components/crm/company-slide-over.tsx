@@ -9,6 +9,11 @@ import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
 import {
+  QuestionnaireFeedbackArea,
+  SendQuestionnaireButton,
+  useSendQuestionnaire,
+} from "@/components/crm/questionnaire-sender";
+import {
   deleteCompanyAction,
   getCompanyRelationsAction,
   updateCompanyCustomFieldAction,
@@ -61,6 +66,21 @@ export function CompanySlideOver({
   const [contacts, setContacts] = useState<ContactSlim[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [deleting, setDeleting] = useState(false);
+
+  const questionnaire = useSendQuestionnaire({
+    entityType: "company",
+    entityId: company?.id ?? "",
+    recipients: contacts,
+    companyId: company?.id ?? null,
+    onSent: () => {
+      if (company) {
+        void getCompanyRelationsAction(company.id).then((res) => {
+          setContacts(res.contacts);
+          setActivities(res.activities);
+        });
+      }
+    },
+  });
 
   useEffect(() => {
     if (!company) return;
@@ -120,21 +140,28 @@ export function CompanySlideOver({
       title={company.name}
       subtitle={company.domain ?? company.website ?? "Empresa sin dominio"}
       headerActions={
-        currentUserRole === "admin" ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={deleting}
-            onClick={() => void handleDelete()}
-            title="Eliminar empresa (solo Admin)"
-            className="text-slate-400 hover:text-red-600"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        ) : undefined
+        <>
+          <SendQuestionnaireButton
+            sending={questionnaire.sending}
+            onClick={questionnaire.trigger}
+          />
+          {currentUserRole === "admin" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={deleting}
+              onClick={() => void handleDelete()}
+              title="Eliminar empresa (solo Admin)"
+              className="text-slate-400 hover:text-red-600"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </>
       }
     >
+      <QuestionnaireFeedbackArea state={questionnaire} />
       <div className="space-y-6">
         {/* Identidad y Web */}
         <div className="space-y-1.5">
