@@ -59,6 +59,57 @@ async function processMailNotification(
     if (existing) return;
   }
 
+  const { data: existingGraph } = await admin
+    .from("emails")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("ms_graph_id", msg.id)
+    .maybeSingle();
+
+  if (existingGraph) return;
+
+  const sentAt = msg.sentDateTime || msg.receivedDateTime || new Date().toISOString();
+
+  if (isOutbound) {
+    const sentMs = new Date(sentAt).getTime();
+    const windowStart = new Date(sentMs - 5 * 60 * 1000).toISOString();
+    const windowEnd = new Date(sentMs + 5 * 60 * 1000).toISOString();
+
+    const { data: recentSynthetic } = await admin
+      .from("emails")
+      .select("id, subject, contact_id, to_emails")
+      .eq("user_id", userId)
+      .eq("direction", "outbound")
+      .like("ms_graph_id", "crm-sent-%")
+      .gte("sent_at", windowStart)
+      .lte("sent_at", windowEnd)
+      .order("sent_at", { ascending: false })
+      .limit(10);
+
+    const incomingSubject = (msg.subject ?? "").trim();
+    const syntheticMatch = (recentSynthetic ?? []).find((row) => {
+      if ((row.subject ?? "").trim() !== incomingSubject) return false;
+      if (row.contact_id === contact.id) return true;
+      const rowRecipients = Array.isArray(row.to_emails)
+        ? row.to_emails.map((e) => String(e).trim().toLowerCase())
+        : [];
+      return toEmails.some((e) => rowRecipients.includes(e));
+    });
+
+    if (syntheticMatch) {
+      await admin
+        .from("emails")
+        .update({
+          ms_graph_id: msg.id,
+          internet_message_id: internetMessageId,
+          ms_conversation_id: msg.conversationId ?? null,
+          has_attachments: Boolean(msg.hasAttachments),
+        })
+        .eq("id", syntheticMatch.id);
+      return;
+    }
+  }
+
   let dealId: string | null = null;
   const { data: contactDeal } = await admin
     .from("deals")
@@ -83,29 +134,25 @@ async function processMailNotification(
     dealId = companyDeal?.id ?? null;
   }
 
-  const sentAt = msg.sentDateTime || msg.receivedDateTime || new Date().toISOString();
   const direction = isOutbound ? "outbound" : "inbound";
 
   const { data: insertedEmail, error: insertErr } = await admin
     .from("emails")
-    .upsert(
-      {
-        ms_graph_id: msg.id,
-        internet_message_id: internetMessageId,
-        ms_conversation_id: msg.conversationId ?? null,
-        user_id: userId,
-        contact_id: contact.id,
-        deal_id: dealId,
-        from_email: fromEmail,
-        to_emails: toEmails as Json,
-        subject: msg.subject ?? null,
-        body_preview: msg.bodyPreview?.slice(0, 500) ?? null,
-        direction,
-        has_attachments: Boolean(msg.hasAttachments),
-        sent_at: sentAt,
-      },
-      { onConflict: "user_id,ms_graph_id" }
-    )
+    .insert({
+      ms_graph_id: msg.id,
+      internet_message_id: internetMessageId,
+      ms_conversation_id: msg.conversationId ?? null,
+      user_id: userId,
+      contact_id: contact.id,
+      deal_id: dealId,
+      from_email: fromEmail,
+      to_emails: toEmails as Json,
+      subject: msg.subject ?? null,
+      body_preview: msg.bodyPreview?.slice(0, 500) ?? null,
+      direction,
+      has_attachments: Boolean(msg.hasAttachments),
+      sent_at: sentAt,
+    })
     .select("id")
     .single();
 
