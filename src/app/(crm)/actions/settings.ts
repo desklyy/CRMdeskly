@@ -225,14 +225,28 @@ export async function createPipelineAction(input: {
 
 export async function updatePipelineAction(pipelineId: string, patch: PipelineUpdate) {
   const { supabase } = await requireAdmin();
+  const sanitized: PipelineUpdate = { ...patch };
 
-  if (patch.is_default) {
+  if (sanitized.name !== undefined) {
+    const trimmed = sanitized.name.trim();
+    if (!trimmed) return { error: "El nombre del pipeline es obligatorio." };
+    sanitized.name = trimmed;
+  }
+
+  if (sanitized.stale_days_default !== undefined) {
+    sanitized.stale_days_default = Math.max(
+      1,
+      Math.floor(Number(sanitized.stale_days_default) || 7)
+    );
+  }
+
+  if (sanitized.is_default) {
     await supabase.from("pipelines").update({ is_default: false }).neq("id", pipelineId);
   }
 
   const { data, error } = await supabase
     .from("pipelines")
-    .update(patch)
+    .update(sanitized)
     .eq("id", pipelineId)
     .select("*")
     .single();

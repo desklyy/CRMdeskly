@@ -41,6 +41,13 @@ export function PipelineBuilder({
   const [newPipeStale, setNewPipeStale] = useState("7");
   const [creatingPipe, setCreatingPipe] = useState(false);
 
+  // Edit pipeline form
+  const [editingPipeId, setEditingPipeId] = useState<string | null>(null);
+  const [editPipeName, setEditPipeName] = useState("");
+  const [editPipeStale, setEditPipeStale] = useState("7");
+  const [savingPipe, setSavingPipe] = useState(false);
+  const [pipeError, setPipeError] = useState<string | null>(null);
+
   // New stage form
   const [stageName, setStageName] = useState("");
   const [stageColor, setStageColor] = useState("#3b82f6");
@@ -231,59 +238,152 @@ export function PipelineBuilder({
     }
   }
 
+  function startEditingPipeline(pipe: PipelineRow) {
+    setPipeError(null);
+    setEditingPipeId(pipe.id);
+    setEditPipeName(pipe.name);
+    setEditPipeStale(String(pipe.stale_days_default));
+  }
+
+  async function handleSavePipeline(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingPipeId || !editPipeName.trim()) return;
+    setSavingPipe(true);
+    setPipeError(null);
+    try {
+      const res = await updatePipelineAction(editingPipeId, {
+        name: editPipeName.trim(),
+        stale_days_default: Math.max(1, Number(editPipeStale) || 7),
+      });
+      if (res.error) {
+        setPipeError(res.error);
+        return;
+      }
+      if (res.data) {
+        setPipelines((prev) =>
+          prev.map((row) => (row.id === res.data!.id ? res.data! : row))
+        );
+        setEditingPipeId(null);
+      }
+    } finally {
+      setSavingPipe(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Create & Select Pipeline */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-slate-950">Pipelines activos</h2>
+        <div className="rounded-[4px] border border-[#E2E8F0] bg-white p-5 space-y-3">
+          <h2 className="text-sm font-bold tracking-[-0.02em] text-[#0F172A]">
+            Pipelines activos
+          </h2>
           <div className="space-y-2">
             {pipelines
               .filter((p) => p.is_active)
-              .map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => setSelectedPipelineId(p.id)}
-                  className={`flex cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-xs transition-colors ${
-                    p.id === selectedPipelineId
-                      ? "border-slate-950 bg-slate-50"
-                      : "border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-slate-900">{p.name}</span>
-                    {p.is_default && <Badge variant="dark">Por defecto</Badge>}
-                  </div>
-                  <div className="flex items-center gap-2 text-slate-500">
-                    <span>Estancado: {p.stale_days_default}d</span>
-                    {!p.is_default && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void updatePipelineAction(p.id, { is_default: true }).then(
-                            (r) => {
-                              if (r.data) {
-                                setPipelines((prev) =>
-                                  prev.map((row) => ({
-                                    ...row,
-                                    is_default: row.id === p.id,
-                                  }))
-                                );
-                              }
-                            }
-                          );
-                        }}
-                        title="Marcar por defecto"
-                        className="rounded p-1 hover:bg-slate-200"
+              .map((p) => {
+                const isEditingPipe = editingPipeId === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      if (!isEditingPipe) setSelectedPipelineId(p.id);
+                    }}
+                    className={`rounded-[4px] border px-3 py-2 text-xs transition-colors ${
+                      p.id === selectedPipelineId
+                        ? "border-[#0F172A] bg-[#F8FAFC]"
+                        : "border-[#E2E8F0] hover:bg-[#F8FAFC]"
+                    } ${isEditingPipe ? "" : "cursor-pointer"}`}
+                  >
+                    {isEditingPipe ? (
+                      <form
+                        onSubmit={handleSavePipeline}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex flex-wrap items-center gap-2"
                       >
-                        <Star className="h-3.5 w-3.5" />
-                      </button>
+                        <Input
+                          required
+                          placeholder="Nombre del pipeline"
+                          value={editPipeName}
+                          onChange={(e) => setEditPipeName(e.target.value)}
+                          className="h-8 flex-1 min-w-[140px]"
+                        />
+                        <Input
+                          type="number"
+                          min="1"
+                          title="Días de estancamiento por defecto"
+                          value={editPipeStale}
+                          onChange={(e) => setEditPipeStale(e.target.value)}
+                          className="h-8 w-20"
+                        />
+                        <Button type="submit" size="sm" disabled={savingPipe}>
+                          <Check className="h-3.5 w-3.5" />
+                          {savingPipe ? "Guardando..." : "Guardar"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditingPipeId(null)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </form>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-[#0F172A]">{p.name}</span>
+                          {p.is_default && <Badge variant="dark">Por defecto</Badge>}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[#64748B]">
+                          <span>Estancado: {p.stale_days_default}d</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startEditingPipeline(p);
+                            }}
+                            title="Editar pipeline"
+                            className="rounded-[4px] p-1 text-[#64748B] hover:bg-[#E2E8F0] hover:text-[#0F172A]"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {!p.is_default && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void updatePipelineAction(p.id, { is_default: true }).then(
+                                  (r) => {
+                                    if (r.data) {
+                                      setPipelines((prev) =>
+                                        prev.map((row) => ({
+                                          ...row,
+                                          is_default: row.id === p.id,
+                                        }))
+                                      );
+                                    }
+                                  }
+                                );
+                              }}
+                              title="Marcar por defecto"
+                              className="rounded-[4px] p-1 hover:bg-[#E2E8F0]"
+                            >
+                              <Star className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
           </div>
+          {pipeError && (
+            <div className="rounded-[4px] border border-[#E2E8F0] border-l-[3px] border-l-red-600 bg-[#F8FAFC] p-2.5 text-xs text-red-700">
+              {pipeError}
+            </div>
+          )}
         </div>
 
         <form
