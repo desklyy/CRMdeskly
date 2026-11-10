@@ -361,7 +361,7 @@ export async function listCalendarView(
   const params = new URLSearchParams({
     startDateTime: startIso,
     endDateTime: endIso,
-    $top: "50",
+    $top: "250",
     $orderby: "start/dateTime",
     $select:
       "id,iCalUId,subject,bodyPreview,start,end,location,isOnlineMeeting,onlineMeeting,webLink,organizer,attendees,isCancelled",

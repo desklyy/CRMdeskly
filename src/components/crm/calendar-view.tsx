@@ -40,6 +40,15 @@ interface CalendarViewProps {
   deals: DealSlim[];
 }
 
+type ViewMode = "week" | "month";
+
+function toLocalDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function getMondayOfWeek(d: Date): Date {
   const date = new Date(d);
   const day = date.getDay();
@@ -55,19 +64,42 @@ function addDays(d: Date, days: number): Date {
   return copy;
 }
 
+function addMonths(d: Date, months: number): Date {
+  const copy = new Date(d.getFullYear(), d.getMonth() + months, 1);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+function getMonthGridRange(anchor: Date): { start: Date; end: Date; days: Date[] } {
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const lastOfMonth = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+  const gridStart = getMondayOfWeek(firstOfMonth);
+  const lastWeekMonday = getMondayOfWeek(lastOfMonth);
+  const gridEnd = addDays(lastWeekMonday, 7);
+  const totalDays = Math.round(
+    (gridEnd.getTime() - gridStart.getTime()) / (24 * 60 * 60 * 1000)
+  );
+  const days = Array.from({ length: totalDays }, (_, i) => addDays(gridStart, i));
+  return { start: gridStart, end: gridEnd, days };
+}
+
+const WEEKDAY_HEADERS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
 export function CalendarView({ companies, contacts, deals }: CalendarViewProps) {
-  const [weekStart, setWeekStart] = useState<Date>(() => getMondayOfWeek(new Date()));
+  const [viewMode, setViewMode] = useState<ViewMode>("week");
+  const [anchorDate, setAnchorDate] = useState<Date>(() => getMondayOfWeek(new Date()));
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(true);
   const [authInvalid, setAuthInvalid] = useState(false);
   const [microsoftEmail, setMicrosoftEmail] = useState<string | undefined>();
   const [events, setEvents] = useState<EnrichedCalendarEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EnrichedCalendarEvent | null>(null);
 
   // Create meeting modal
   const [createOpen, setCreateOpen] = useState(false);
   const [subject, setSubject] = useState("");
-  const [dateStr, setDateStr] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateStr, setDateStr] = useState(() => toLocalDateKey(new Date()));
   const [startTime, setStartTime] = useState("10:00");
   const [endTime, setEndTime] = useState("10:30");
   const [attendeesText, setAttendeesText] = useState("");
@@ -83,11 +115,21 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
   const [linkContactId, setLinkContactId] = useState("");
   const [linkDealId, setLinkDealId] = useState("");
 
-  const loadWeek = useCallback(async (monday: Date) => {
+  const visibleRange = useMemo(() => {
+    if (viewMode === "month") {
+      return getMonthGridRange(anchorDate);
+    }
+    const start = getMondayOfWeek(anchorDate);
+    const end = addDays(start, 7);
+    const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+    return { start, end, days };
+  }, [viewMode, anchorDate]);
+
+  const loadRange = useCallback(async (start: Date, end: Date) => {
     setLoading(true);
     setError(null);
-    const startIso = monday.toISOString();
-    const endIso = addDays(monday, 7).toISOString();
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
 
     try {
       const res = await getCalendarAgendaAction(startIso, endIso);
@@ -102,16 +144,34 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
   }, []);
 
   useEffect(() => {
-    void loadWeek(weekStart);
-  }, [weekStart, loadWeek]);
+    void loadRange(visibleRange.start, visibleRange.end);
+  }, [visibleRange.start, visibleRange.end, loadRange]);
 
   const companyMap = useMemo(() => new Map(companies.map((c) => [c.id, c.name])), [companies]);
   const dealMap = useMemo(() => new Map(deals.map((d) => [d.id, d.title])), [deals]);
 
-  const weekDays = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart]
-  );
+  const eventsByDay = useMemo(() => {
+    const map = new Map<string, EnrichedCalendarEvent[]>();
+    for (const ev of events) {
+      const key = (ev.start?.dateTime ?? "").slice(0, 10);
+      if (!key) continue;
+      const list = map.get(key) ?? [];
+      list.push(ev);
+      map.set(key, list);
+    }
+    return map;
+  }, [events]);
+
+  function shiftPeriod(direction: -1 | 1) {
+    setAnchorDate((prev) =>
+      viewMode === "month" ? addMonths(prev, direction) : addDays(prev, direction * 7)
+    );
+  }
+
+  function openCreateForDay(day?: Date) {
+    setDateStr(toLocalDateKey(day ?? new Date()));
+    setCreateOpen(true);
+  }
 
   async function handleCreateMeeting(e: React.FormEvent) {
     e.preventDefault();
@@ -144,7 +204,7 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
       setCreateOpen(false);
       setSubject("");
       setAttendeesText("");
-      await loadWeek(weekStart);
+      await loadRange(visibleRange.start, visibleRange.end);
     } finally {
       setCreating(false);
     }
@@ -175,6 +235,9 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
           ev.id === linkingEvent.id ? { ...ev, link: res.data ?? null } : ev
         )
       );
+      setSelectedEvent((prev) =>
+        prev && prev.id === linkingEvent.id ? { ...prev, link: res.data ?? null } : prev
+      );
       setLinkingEvent(null);
     }
   }
@@ -184,8 +247,15 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
     const res = await deleteOutlookMeetingAction(msEventId);
     if (res.ok) {
       setEvents((prev) => prev.filter((ev) => ev.id !== msEventId));
+      setSelectedEvent((prev) => (prev?.id === msEventId ? null : prev));
     }
   }
+
+  const todayKey = toLocalDateKey(new Date());
+  const periodLabel =
+    viewMode === "month"
+      ? anchorDate.toLocaleDateString("es-ES", { month: "long", year: "numeric" })
+      : `Semana del ${visibleRange.start.toLocaleDateString("es-ES")}`;
 
   if (!loading && (!connected || authInvalid)) {
     return (
@@ -208,26 +278,99 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
     );
   }
 
+  function renderEventCardActions(ev: EnrichedCalendarEvent) {
+    return (
+      <div className="mt-2 flex items-center justify-between gap-1">
+        <button
+          type="button"
+          onClick={() => openLinkModal(ev)}
+          className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-[11px] text-[#334155] hover:bg-[#E2E8F0]"
+          title="Vincular / desvincular al CRM"
+        >
+          <Link2 className="h-3 w-3" />
+          {ev.link ? "Vinculado" : "Vincular"}
+        </button>
+
+        <div className="flex items-center gap-1">
+          {ev.onlineMeeting?.joinUrl && (
+            <a
+              href={ev.onlineMeeting.joinUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Abrir Teams"
+              className="rounded-[4px] p-1 text-[#64748B] hover:bg-[#E2E8F0]"
+            >
+              <Video className="h-3 w-3" />
+            </a>
+          )}
+          {ev.webLink && (
+            <a
+              href={ev.webLink}
+              target="_blank"
+              rel="noreferrer"
+              title="Abrir en Outlook"
+              className="rounded-[4px] p-1 text-[#64748B] hover:bg-[#E2E8F0]"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleDeleteEvent(ev.id)}
+            title="Cancelar reunión"
+            className="rounded-[4px] p-1 text-[#64748B] hover:bg-red-50 hover:text-red-600"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-950">
+          <h1 className="text-xl font-bold tracking-[-0.02em] text-[#0F172A]">
             Calendario Outlook
           </h1>
-          <p className="text-xs text-slate-500">
-            Fuente única en vivo {microsoftEmail ? `(${microsoftEmail})` : ""} · Semana del{" "}
-            {weekStart.toLocaleDateString("es-ES")}
+          <p className="text-xs capitalize text-[#64748B]">
+            Fuente única en vivo {microsoftEmail ? `(${microsoftEmail})` : ""} · {periodLabel}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center rounded-md border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center rounded-[4px] border border-[#E2E8F0] bg-white p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("week")}
+              className={`rounded-[3px] px-2.5 py-1 text-xs font-semibold transition-colors ${
+                viewMode === "week"
+                  ? "bg-[#1658F5] text-white"
+                  : "text-[#64748B] hover:text-[#0F172A]"
+              }`}
+            >
+              Semana
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("month")}
+              className={`rounded-[3px] px-2.5 py-1 text-xs font-semibold transition-colors ${
+                viewMode === "month"
+                  ? "bg-[#1658F5] text-white"
+                  : "text-[#64748B] hover:text-[#0F172A]"
+              }`}
+            >
+              Mes
+            </button>
+          </div>
+
+          <div className="flex items-center rounded-[4px] border border-[#E2E8F0] bg-white">
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => setWeekStart(addDays(weekStart, -7))}
+              onClick={() => shiftPeriod(-1)}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -235,7 +378,7 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => setWeekStart(getMondayOfWeek(new Date()))}
+              onClick={() => setAnchorDate(new Date())}
             >
               Hoy
             </Button>
@@ -243,13 +386,18 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => setWeekStart(addDays(weekStart, 7))}
+              onClick={() => shiftPeriod(1)}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
 
-          <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => openCreateForDay()}
+            className="bg-[#1658F5] text-white hover:bg-[#1246C8]"
+          >
             <Plus className="h-3.5 w-3.5" />
             Agendar reunión
           </Button>
@@ -257,40 +405,55 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+        <div className="rounded-[4px] border border-[#E2E8F0] border-l-[3px] border-l-red-600 bg-[#F8FAFC] p-3 text-xs text-red-700">
           {error}
         </div>
       )}
 
       {loading ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-10 text-center text-xs text-slate-500">
+        <div className="rounded-[4px] border border-[#E2E8F0] bg-white p-10 text-center text-xs text-[#64748B]">
           Consultando tu calendario de Outlook...
         </div>
-      ) : (
+      ) : viewMode === "week" ? (
         <div className="grid gap-3 md:grid-cols-7">
-          {weekDays.map((day) => {
-            const isoPrefix = day.toISOString().slice(0, 10);
-            const dayEvents = events.filter((ev) =>
-              (ev.start?.dateTime ?? "").startsWith(isoPrefix)
-            );
+          {visibleRange.days.map((day) => {
+            const dayKey = toLocalDateKey(day);
+            const dayEvents = eventsByDay.get(dayKey) ?? [];
+            const isToday = dayKey === todayKey;
 
             return (
               <div
-                key={isoPrefix}
-                className="flex min-h-[320px] flex-col rounded-lg border border-slate-200 bg-white"
+                key={dayKey}
+                className={`flex min-h-[320px] flex-col rounded-[4px] border bg-white ${
+                  isToday ? "border-[#1658F5]" : "border-[#E2E8F0]"
+                }`}
               >
-                <div className="border-b border-slate-200 bg-slate-50/70 px-3 py-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    {day.toLocaleDateString("es-ES", { weekday: "short" })}
-                  </p>
-                  <p className="text-sm font-semibold text-slate-950">
-                    {day.toLocaleDateString("es-ES", { day: "numeric", month: "short" })}
-                  </p>
+                <div className="flex items-center justify-between border-b border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      {day.toLocaleDateString("es-ES", { weekday: "short" })}
+                    </p>
+                    <p
+                      className={`text-sm font-bold ${
+                        isToday ? "text-[#1658F5]" : "text-[#0F172A]"
+                      }`}
+                    >
+                      {day.toLocaleDateString("es-ES", { day: "numeric", month: "short" })}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openCreateForDay(day)}
+                    title="Agendar reunión este día"
+                    className="rounded-[4px] p-1 text-[#64748B] hover:bg-[#E2E8F0] hover:text-[#0F172A]"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
                 </div>
 
                 <div className="flex-1 space-y-2 p-2">
                   {dayEvents.length === 0 ? (
-                    <p className="py-4 text-center text-[11px] text-slate-400">Libre</p>
+                    <p className="py-4 text-center text-[11px] text-[#64748B]">Libre</p>
                   ) : (
                     dayEvents.map((ev) => {
                       const timeStart = ev.start?.dateTime.slice(11, 16) ?? "";
@@ -305,12 +468,12 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
                       return (
                         <div
                           key={ev.id}
-                          className="rounded-md border border-slate-200 bg-slate-50/60 p-2 text-xs"
+                          className="rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] p-2 text-xs"
                         >
-                          <p className="font-mono text-[10px] text-slate-500">
+                          <p className="font-mono text-[10px] text-[#64748B]">
                             {timeStart} – {timeEnd}
                           </p>
-                          <p className="mt-0.5 font-medium text-slate-950">
+                          <p className="mt-0.5 font-semibold text-[#0F172A]">
                             {ev.subject || "(Sin título)"}
                           </p>
 
@@ -321,50 +484,7 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
                             </div>
                           )}
 
-                          <div className="mt-2 flex items-center justify-between gap-1">
-                            <button
-                              type="button"
-                              onClick={() => openLinkModal(ev)}
-                              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-200"
-                              title="Vincular / desvincular al CRM"
-                            >
-                              <Link2 className="h-3 w-3" />
-                              {ev.link ? "Vinculado" : "Vincular"}
-                            </button>
-
-                            <div className="flex items-center gap-1">
-                              {ev.onlineMeeting?.joinUrl && (
-                                <a
-                                  href={ev.onlineMeeting.joinUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="Abrir Teams"
-                                  className="rounded p-1 text-slate-500 hover:bg-slate-200"
-                                >
-                                  <Video className="h-3 w-3" />
-                                </a>
-                              )}
-                              {ev.webLink && (
-                                <a
-                                  href={ev.webLink}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="Abrir en Outlook"
-                                  className="rounded p-1 text-slate-500 hover:bg-slate-200"
-                                >
-                                  <ExternalLink className="h-3 w-3" />
-                                </a>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteEvent(ev.id)}
-                                title="Cancelar reunión"
-                                className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </div>
+                          {renderEventCardActions(ev)}
                         </div>
                       );
                     })
@@ -373,6 +493,151 @@ export function CalendarView({ companies, contacts, deals }: CalendarViewProps) 
               </div>
             );
           })}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-[4px] border border-[#E2E8F0] bg-white">
+          <div className="grid grid-cols-7 border-b border-[#E2E8F0] bg-[#F8FAFC]">
+            {WEEKDAY_HEADERS.map((label) => (
+              <div
+                key={label}
+                className="border-r border-[#E2E8F0] px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#64748B] last:border-r-0"
+              >
+                {label}
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-7">
+            {visibleRange.days.map((day) => {
+              const dayKey = toLocalDateKey(day);
+              const dayEvents = eventsByDay.get(dayKey) ?? [];
+              const isToday = dayKey === todayKey;
+              const isCurrentMonth = day.getMonth() === anchorDate.getMonth();
+
+              return (
+                <div
+                  key={dayKey}
+                  className={`group flex min-h-[124px] flex-col border-b border-r border-[#E2E8F0] p-2 [&:nth-child(7n)]:border-r-0 ${
+                    isCurrentMonth ? "bg-white" : "bg-[#F8FAFC]"
+                  }`}
+                >
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span
+                      className={`inline-flex h-6 min-w-6 items-center justify-center rounded-[4px] px-1.5 text-xs font-semibold ${
+                        isToday
+                          ? "bg-[#1658F5] text-white"
+                          : isCurrentMonth
+                            ? "text-[#0F172A]"
+                            : "text-[#64748B]/60"
+                      }`}
+                    >
+                      {day.getDate()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openCreateForDay(day)}
+                      title="Agendar reunión este día"
+                      className="rounded-[4px] p-0.5 text-[#64748B] opacity-0 transition-opacity hover:bg-[#E2E8F0] hover:text-[#0F172A] group-hover:opacity-100"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-1 overflow-y-auto">
+                    {dayEvents.map((ev) => {
+                      const timeStart = ev.start?.dateTime.slice(11, 16) ?? "";
+                      const hasLink = Boolean(ev.link);
+
+                      return (
+                        <button
+                          key={ev.id}
+                          type="button"
+                          onClick={() => setSelectedEvent(ev)}
+                          className={`flex w-full items-center gap-1 rounded-[3px] border px-1.5 py-1 text-left text-[11px] transition-colors ${
+                            hasLink
+                              ? "border-[#1658F5]/40 bg-[#1658F5]/5 text-[#0F172A] hover:bg-[#1658F5]/10"
+                              : "border-[#E2E8F0] bg-[#F8FAFC] text-[#334155] hover:border-[#64748B]"
+                          }`}
+                          title={`${timeStart} ${ev.subject || "(Sin título)"}`}
+                        >
+                          <span className="shrink-0 font-mono text-[10px] text-[#64748B]">
+                            {timeStart}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate font-medium">
+                            {ev.subject || "(Sin título)"}
+                          </span>
+                          {ev.onlineMeeting?.joinUrl && (
+                            <Video className="h-2.5 w-2.5 shrink-0 text-[#1658F5]" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Event Detail Modal (used from Monthly view) */}
+      {selectedEvent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/30 p-4"
+          onClick={() => setSelectedEvent(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md space-y-3 rounded-[4px] border border-[#E2E8F0] bg-white p-[30px]"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="font-mono text-xs text-[#64748B]">
+                  {selectedEvent.start?.dateTime.slice(0, 10)} ·{" "}
+                  {selectedEvent.start?.dateTime.slice(11, 16)} –{" "}
+                  {selectedEvent.end?.dateTime.slice(11, 16)}
+                </p>
+                <h2 className="mt-1 text-base font-bold text-[#0F172A]">
+                  {selectedEvent.subject || "(Sin título)"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedEvent(null)}
+                className="rounded-[4px] p-1 text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {(selectedEvent.link?.deal_id || selectedEvent.link?.company_id) && (
+              <div className="flex flex-wrap gap-1.5">
+                {selectedEvent.link?.deal_id && dealMap.get(selectedEvent.link.deal_id) && (
+                  <Badge variant="dark">{dealMap.get(selectedEvent.link.deal_id)}</Badge>
+                )}
+                {selectedEvent.link?.company_id &&
+                  companyMap.get(selectedEvent.link.company_id) && (
+                    <Badge>{companyMap.get(selectedEvent.link.company_id)}</Badge>
+                  )}
+              </div>
+            )}
+
+            {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
+              <div className="rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] p-2.5 text-xs text-[#334155]">
+                <p className="font-semibold text-[#0F172A]">Asistentes</p>
+                <p className="mt-0.5 text-[11px] text-[#64748B]">
+                  {selectedEvent.attendees
+                    .map((a) => a.emailAddress?.address)
+                    .filter(Boolean)
+                    .join(", ")}
+                </p>
+              </div>
+            )}
+
+            <div className="border-t border-[#E2E8F0] pt-2">
+              {renderEventCardActions(selectedEvent)}
+            </div>
+          </div>
         </div>
       )}
 
