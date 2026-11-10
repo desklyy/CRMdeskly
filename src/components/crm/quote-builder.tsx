@@ -20,6 +20,7 @@ interface QuoteBuilderProps {
   companyId: string | null;
   contactId: string | null;
   contactEmail?: string | null;
+  emailSignature?: string | null;
   quotes: QuoteWithItems[];
   onQuotesChanged: (next: QuoteWithItems[]) => void;
   onDealAmountSynced?: (newAmount: number) => void;
@@ -50,6 +51,7 @@ export function QuoteBuilder({
   companyId,
   contactId,
   contactEmail,
+  emailSignature,
   quotes,
   onQuotesChanged,
   onDealAmountSynced,
@@ -58,6 +60,7 @@ export function QuoteBuilder({
   const [showEditor, setShowEditor] = useState(quotes.length === 0);
   const [validUntil, setValidUntil] = useState("");
   const [terms, setTerms] = useState("Pago a 30 días mediante transferencia bancaria.");
+  const [includeSignature, setIncludeSignature] = useState(true);
   const [items, setItems] = useState<QuoteItemInput[]>([{ ...EMPTY_ITEM }]);
   const [syncDealAmount, setSyncDealAmount] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -163,6 +166,7 @@ export function QuoteBuilder({
         subject: `Presupuesto ${q.quote_number}`,
         bodyText: `Hola,\n\nTe adjuntamos el presupuesto ${q.quote_number} por importe total de ${formatCurrencyEUR(q.total_amount)}.\n\nQuedamos a tu disposición para cualquier duda.`,
         quoteId: q.id,
+        includeSignature,
       });
 
       if (res.error) {
@@ -299,15 +303,34 @@ export function QuoteBuilder({
             );
           })}
 
-          <label className="flex items-center gap-2 text-[11px] text-slate-500">
-            <input
-              type="checkbox"
-              checked={syncDealAmount}
-              onChange={(e) => setSyncDealAmount(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-slate-300"
-            />
-            Sincronizar importe del negocio (base imponible sin IVA) al enviar o aceptar.
-          </label>
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-[11px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={syncDealAmount}
+                onChange={(e) => setSyncDealAmount(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300"
+              />
+              Sincronizar importe del negocio (base imponible sin IVA) al enviar o aceptar.
+            </label>
+
+            {emailSignature && (
+              <label className="flex items-center gap-2 text-[11px] text-[#334155]">
+                <input
+                  type="checkbox"
+                  checked={includeSignature}
+                  onChange={(e) => setIncludeSignature(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-[#E2E8F0] accent-[#1658F5]"
+                />
+                <span>
+                  Incluir mi firma personal al enviar por Outlook{" "}
+                  <span className="text-[#64748B]">
+                    ({includeSignature ? "activa" : "quitada para este envío"})
+                  </span>
+                </span>
+              </label>
+            )}
+          </div>
         </div>
       )}
 

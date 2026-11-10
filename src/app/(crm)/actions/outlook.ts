@@ -137,6 +137,7 @@ export async function sendDealEmailAction(input: {
   subject: string;
   bodyText: string;
   quoteId?: string | null;
+  includeSignature?: boolean;
 }) {
   const { supabase, user } = await requireUser();
   const toEmail = input.toEmail.trim().toLowerCase();
@@ -222,13 +223,16 @@ export async function sendDealEmailAction(input: {
     .map((line) => `<p>${line.replace(/</g, "&lt;").replace(/>/g, "&gt;") || "&nbsp;"}</p>`)
     .join("");
 
-  const { data: profileSig } = await supabase
-    .from("profiles")
-    .select("email_signature")
-    .eq("id", user.id)
-    .maybeSingle();
+  let htmlBody = rawHtmlBody;
+  if (input.includeSignature !== false) {
+    const { data: profileSig } = await supabase
+      .from("profiles")
+      .select("email_signature")
+      .eq("id", user.id)
+      .maybeSingle();
 
-  const htmlBody = appendSignatureToHtmlBody(rawHtmlBody, profileSig?.email_signature);
+    htmlBody = appendSignatureToHtmlBody(rawHtmlBody, profileSig?.email_signature);
+  }
 
   try {
     await sendOutlookMail(user.id, {
@@ -348,6 +352,20 @@ export async function sendQuestionnaireEmailAction(input: {
     toEmail,
     greetingName: contact.first_name?.trim() || "",
   };
+}
+
+export async function getMyEmailSignatureAction(): Promise<string | null> {
+  const { supabase, user } = await requireUser();
+  const { data } = await supabase
+    .from("profiles")
+    .select("email_signature")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const raw = data?.email_signature;
+  if (!raw) return null;
+  const clean = sanitizeSignatureHtml(raw);
+  return clean || null;
 }
 
 export async function updateMyEmailSignatureAction(rawSignatureHtml: string) {

@@ -32,8 +32,10 @@ import {
 } from "@/app/(crm)/actions/deals-and-quotes";
 import {
   createOutlookMeetingAction,
+  getMyEmailSignatureAction,
   sendDealEmailAction,
 } from "@/app/(crm)/actions/outlook";
+import { sanitizeSignatureHtml } from "@/lib/email/templates";
 import type { Database, Json, UserRole } from "@/types/database";
 
 type CompanySlim = Pick<Database["public"]["Tables"]["companies"]["Row"], "id" | "name">;
@@ -114,6 +116,8 @@ export function DealSlideOver({
   const [expandedEmailId, setExpandedEmailId] = useState<string | null>(null);
   const [expandedBody, setExpandedBody] = useState<string | null>(null);
   const [loadingEmailBody, setLoadingEmailBody] = useState(false);
+  const [mySignature, setMySignature] = useState<string | null>(null);
+  const [includeEmailSignature, setIncludeEmailSignature] = useState(true);
 
   // Quick Outlook meeting scheduler
   const [meetingSubject, setMeetingSubject] = useState("");
@@ -181,6 +185,7 @@ export function DealSlideOver({
     setExpandedBody(null);
     setEmailFeedback(null);
     setMeetingFeedback(null);
+    setIncludeEmailSignature(true);
     const primary = contacts.find((c) => c.id === deal.primary_contact_id);
     setEmailTo(primary?.email ?? "");
     setEmailSubject(`Sobre ${deal.title}`);
@@ -193,6 +198,9 @@ export function DealSlideOver({
       setEmails(res.emails);
       setCalendarLinks(res.calendarLinks);
       setActivities(res.activities);
+    });
+    void getMyEmailSignatureAction().then((sig) => {
+      if (active) setMySignature(sig);
     });
     return () => {
       active = false;
@@ -539,6 +547,7 @@ export function DealSlideOver({
           companyId={deal.company_id}
           contactId={deal.primary_contact_id}
           contactEmail={primaryContactEmail}
+          emailSignature={mySignature}
           quotes={quotes}
           onQuotesChanged={setQuotes}
           onDealAmountSynced={(newAmount) =>
@@ -562,6 +571,7 @@ export function DealSlideOver({
                   toEmail: emailTo,
                   subject: emailSubject,
                   bodyText: emailBody,
+                  includeSignature: includeEmailSignature,
                 });
                 if (res.error) {
                   setEmailFeedback(res.error);
@@ -571,21 +581,22 @@ export function DealSlideOver({
                   setEmails((prev) => [res.data!, ...prev]);
                 }
                 setEmailBody("");
+                setIncludeEmailSignature(true);
                 setEmailFeedback("Email enviado por Outlook.");
               } finally {
                 setSendingEmail(false);
               }
             }}
-            className="space-y-2.5 rounded-md border border-slate-200 bg-slate-50/70 p-3.5"
+            className="space-y-2.5 rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] p-3.5"
           >
             <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-600">
+              <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-[#334155]">
                 <Mail className="h-3.5 w-3.5" />
                 Enviar correo por Outlook
               </h3>
             </div>
             {emailFeedback && (
-              <p className="text-xs text-slate-700">{emailFeedback}</p>
+              <p className="text-xs text-[#0F172A]">{emailFeedback}</p>
             )}
             <Input
               required
@@ -608,8 +619,39 @@ export function DealSlideOver({
               placeholder="Escribe el mensaje..."
               value={emailBody}
               onChange={(e) => setEmailBody(e.target.value)}
-              className="w-full rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-950"
+              className="w-full rounded-[4px] border border-[#E2E8F0] bg-white p-2 text-xs text-[#0F172A] focus:border-[#1658F5] focus:outline-none"
             />
+
+            {mySignature && (
+              <div className="rounded-[4px] border border-[#E2E8F0] bg-white p-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 font-semibold text-[#0F172A]">
+                    <input
+                      type="checkbox"
+                      checked={includeEmailSignature}
+                      onChange={(e) => setIncludeEmailSignature(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-[#E2E8F0] accent-[#1658F5]"
+                    />
+                    <span>Firma personal incluida</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIncludeEmailSignature((v) => !v)}
+                    className="text-[11px] font-semibold text-[#1658F5] hover:underline"
+                  >
+                    {includeEmailSignature ? "Quitar de este email" : "Volver a incluir"}
+                  </button>
+                </div>
+
+                {includeEmailSignature && (
+                  <div
+                    className="mt-2 border-t border-[#E2E8F0] pt-2 text-[12px] leading-relaxed text-[#334155]"
+                    dangerouslySetInnerHTML={{ __html: sanitizeSignatureHtml(mySignature) }}
+                  />
+                )}
+              </div>
+            )}
+
             <div className="flex justify-end">
               <Button type="submit" size="sm" disabled={sendingEmail}>
                 <Mail className="h-3.5 w-3.5" />
