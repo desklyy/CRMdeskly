@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/types/database";
@@ -148,6 +149,11 @@ export async function POST(request: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
+
+  revalidatePath("/pipelines");
+  revalidatePath("/companies");
+  revalidatePath("/contacts");
+  revalidatePath("/");
 
   return NextResponse.json({ ok: true, result: data }, { status: 201 });
 }

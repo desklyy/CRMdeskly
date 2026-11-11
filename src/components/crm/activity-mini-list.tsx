@@ -11,6 +11,7 @@ const EVENT_LABELS: Record<string, string> = {
   contact_created: "Contacto creado",
   variable_updated: "Variable actualizada",
   lead_ingested: "Lead captado",
+  questionnaire_completed: "Cuestionario completado",
   stage_changed: "Cambio de etapa",
   quote_sent: "Presupuesto enviado",
   email_received: "Email recibido",

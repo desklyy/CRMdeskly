@@ -213,8 +213,43 @@ export function CustomFieldsPanel({
     const displayString =
       rawVal === null || rawVal === undefined ? "" : String(rawVal);
     const isNumeric = field.field_type === "number" || field.field_type === "currency";
+    const isLongText =
+      field.field_type === "text" &&
+      (displayString.includes("\n") || displayString.length > 60);
+
+    function commitTextDraft() {
+      const trimmed = draftText.trim();
+      const parsed: Json =
+        trimmed === ""
+          ? null
+          : isNumeric
+            ? Number(trimmed)
+            : trimmed;
+      setEditingKey(null);
+      void onUpdateField(field.key, parsed);
+    }
 
     if (editingKey === field.key) {
+      if (isLongText) {
+        return (
+          <textarea
+            autoFocus
+            rows={4}
+            value={draftText}
+            onChange={(e) => setDraftText(e.target.value)}
+            onBlur={commitTextDraft}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setEditingKey(null);
+              } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                (e.target as HTMLTextAreaElement).blur();
+              }
+            }}
+            className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm leading-relaxed text-slate-900 focus:outline-none"
+          />
+        );
+      }
+
       return (
         <input
           autoFocus
@@ -222,17 +257,7 @@ export function CustomFieldsPanel({
           step={isNumeric ? "any" : undefined}
           value={draftText}
           onChange={(e) => setDraftText(e.target.value)}
-          onBlur={() => {
-            const trimmed = draftText.trim();
-            const parsed: Json =
-              trimmed === ""
-                ? null
-                : isNumeric
-                  ? Number(trimmed)
-                  : trimmed;
-            setEditingKey(null);
-            void onUpdateField(field.key, parsed);
-          }}
+          onBlur={commitTextDraft}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               (e.target as HTMLInputElement).blur();
@@ -253,9 +278,11 @@ export function CustomFieldsPanel({
             setDraftText(displayString);
             setEditingKey(field.key);
           }}
-          className={`min-w-0 flex-1 truncate rounded px-1.5 py-0.5 text-left text-sm hover:bg-slate-100 ${
-            displayString ? "text-slate-900" : "text-slate-400"
-          }`}
+          className={`min-w-0 flex-1 rounded px-1.5 py-0.5 text-left text-sm hover:bg-slate-100 ${
+            field.field_type === "text"
+              ? "whitespace-pre-wrap break-words leading-relaxed"
+              : "truncate"
+          } ${displayString ? "text-slate-900" : "text-slate-400"}`}
         >
           {field.field_type === "currency" && displayString
             ? formatCurrencyEUR(displayString)
