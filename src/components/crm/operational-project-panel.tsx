@@ -81,21 +81,65 @@ function parseDepartmentsAndProcedures(
   }
 
   if (procsRaw) {
-    for (const rawLine of procsRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)) {
-      const cleaned = rawLine.replace(/^[•\-*]\s*/, "");
-      const colonIdx = cleaned.indexOf(":");
-      const head = (colonIdx > 0 ? cleaned.slice(0, colonIdx) : cleaned).trim();
-      const proc = colonIdx > 0 ? cleaned.slice(colonIdx + 1).trim() : null;
-      const m = head.match(/^(.+?)\s*\(([^)]+)\)$/);
-      const name = (m ? m[1] : head).trim();
-      const workers = m ? m[2].trim() : null;
-      const key = name.toLowerCase();
-      const prev = byName.get(key);
-      if (prev) {
-        prev.workers = prev.workers || workers;
-        prev.procedures = proc || prev.procedures;
+    let currentDept: ParsedDepartment | null = null;
+    const hasSeededDepts = byName.size > 0;
+
+    for (const rawLine of procsRaw.split(/\r?\n/)) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
+
+      const hasBullet = /^[•*]\s*/.test(trimmed);
+      const withoutBullet = trimmed.replace(/^[•*]\s*/, "");
+      const colonIdx = withoutBullet.indexOf(":");
+
+      if (colonIdx > 0) {
+        const head = withoutBullet.slice(0, colonIdx).trim();
+        const proc = withoutBullet.slice(colonIdx + 1).trim();
+        const m = head.match(/^(.+?)\s*\(([^)]+)\)$/);
+        const name = (m ? m[1] : head).trim();
+        const workers = m ? m[2].trim() : null;
+        const key = name.toLowerCase();
+
+        const matchesKnownDept = byName.has(key);
+        const matchesHeaderFormat = hasBullet && (Boolean(workers) || !hasSeededDepts);
+
+        if (matchesKnownDept || matchesHeaderFormat) {
+          const existing = byName.get(key);
+          if (existing) {
+            existing.workers = existing.workers || workers;
+            if (proc) {
+              existing.procedures = existing.procedures
+                ? `${existing.procedures}\n${proc}`
+                : proc;
+            }
+            currentDept = existing;
+          } else {
+            const created: ParsedDepartment = {
+              name,
+              workers,
+              procedures: proc || null,
+            };
+            byName.set(key, created);
+            currentDept = created;
+          }
+          continue;
+        }
+      }
+
+      if (currentDept) {
+        currentDept.procedures = currentDept.procedures
+          ? `${currentDept.procedures}\n${trimmed}`
+          : trimmed;
       } else {
-        byName.set(key, { name, workers, procedures: proc });
+        const cleaned = trimmed.replace(/^[•\-*]\s*/, "");
+        const fallbackKey = cleaned.toLowerCase();
+        const fallback: ParsedDepartment = {
+          name: cleaned,
+          workers: null,
+          procedures: null,
+        };
+        byName.set(fallbackKey, fallback);
+        currentDept = fallback;
       }
     }
   }
