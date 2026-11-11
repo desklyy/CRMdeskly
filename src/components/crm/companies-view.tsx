@@ -41,6 +41,7 @@ export function CompaniesView({
   const [search, setSearch] = useState("");
   const [industryFilter, setIndustryFilter] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("");
+  const [questionnaireFilter, setQuestionnaireFilter] = useState<"" | "yes" | "no">("");
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("id"));
   const [newOpen, setNewOpen] = useState(searchParams.get("new") === "1");
   const [newPropOpen, setNewPropOpen] = useState(false);
@@ -94,8 +95,16 @@ export function CompaniesView({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return companies.filter((c) => {
+      const cf = (c.custom_fields ?? {}) as Record<string, unknown>;
+      const hasQuestionnaire = Boolean(
+        cf.departamentos_empresa ||
+          cf.procedimientos_por_departamento ||
+          cf.erp_principal
+      );
       if (industryFilter && c.industry !== industryFilter) return false;
       if (ownerFilter && c.owner_id !== ownerFilter) return false;
+      if (questionnaireFilter === "yes" && !hasQuestionnaire) return false;
+      if (questionnaireFilter === "no" && hasQuestionnaire) return false;
       if (!q) return true;
       return (
         c.name.toLowerCase().includes(q) ||
@@ -103,7 +112,7 @@ export function CompaniesView({
         (c.tax_id?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [companies, search, industryFilter, ownerFilter]);
+  }, [companies, search, industryFilter, ownerFilter, questionnaireFilter]);
 
   const selectedCompany = useMemo(
     () => companies.find((c) => c.id === selectedId) ?? null,
@@ -209,6 +218,18 @@ export function CompaniesView({
             </option>
           ))}
         </select>
+
+        <select
+          value={questionnaireFilter}
+          onChange={(e) =>
+            setQuestionnaireFilter(e.target.value as "" | "yes" | "no")
+          }
+          className="h-8 rounded-md border border-slate-200 bg-white px-2.5 text-xs text-slate-700 focus:outline-none"
+        >
+          <option value="">Cuestionario: Todos</option>
+          <option value="yes">Con cuestionario ✓</option>
+          <option value="no">Sin cuestionario</option>
+        </select>
       </div>
 
       {/* Dense Table */}
@@ -235,6 +256,14 @@ export function CompaniesView({
             ) : (
               filtered.map((company) => {
                 const owner = company.owner_id ? profileMap.get(company.owner_id) : null;
+                const cf = (company.custom_fields ?? {}) as Record<string, unknown>;
+                const hasQuestionnaire = Boolean(
+                  cf.departamentos_empresa ||
+                    cf.procedimientos_por_departamento ||
+                    cf.erp_principal
+                );
+                const erpLabel =
+                  typeof cf.erp_principal === "string" ? cf.erp_principal : null;
                 return (
                   <tr
                     key={company.id}
@@ -242,7 +271,19 @@ export function CompaniesView({
                     className="cursor-pointer transition-colors hover:bg-slate-50"
                   >
                     <td className="px-4 py-2.5 font-medium text-slate-950">
-                      {company.name}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span>{company.name}</span>
+                        {hasQuestionnaire && (
+                          <Badge variant="success" className="text-[10px]">
+                            Cuestionario ✓
+                          </Badge>
+                        )}
+                        {erpLabel && (
+                          <Badge variant="default" className="text-[10px]">
+                            {erpLabel}
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-xs text-slate-600">
                       {company.domain ?? "—"}

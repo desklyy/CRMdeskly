@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Calendar, Mail, Plus, Trash2, Users } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, Calendar, Mail, Plus, Trash2, Users } from "lucide-react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -108,9 +109,9 @@ export function DealSlideOver({
   const [newContactRole, setNewContactRole] = useState("");
   const [deleting, setDeleting] = useState(false);
 
-  const [summaryType, setSummaryType] = useState<"call_summary" | "meeting_summary">(
-    "call_summary"
-  );
+  const [summaryType, setSummaryType] = useState<
+    "call_summary" | "meeting_summary" | "internal_note"
+  >("call_summary");
   const [summaryOutcome, setSummaryOutcome] = useState("Avanza a siguiente paso");
   const [summaryObjections, setSummaryObjections] = useState("");
   const [summaryOneLiner, setSummaryOneLiner] = useState("");
@@ -402,6 +403,29 @@ export function DealSlideOver({
 
       {tab === "details" && (
         <div className="space-y-6">
+          {(deal.company_id || deal.primary_contact_id) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {deal.company_id && (
+                <Link
+                  href={`/companies?id=${deal.company_id}`}
+                  className="inline-flex items-center gap-1 rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1 text-xs font-semibold text-[#1658F5] transition-colors hover:border-[#1658F5]"
+                >
+                  Ver empresa
+                  <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              )}
+              {deal.primary_contact_id && (
+                <Link
+                  href={`/contacts?id=${deal.primary_contact_id}`}
+                  className="inline-flex items-center gap-1 rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1 text-xs font-semibold text-[#1658F5] transition-colors hover:border-[#1658F5]"
+                >
+                  Ver contacto principal
+                  <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              )}
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
               Variables del negocio
@@ -580,6 +604,7 @@ export function DealSlideOver({
 
       {tab === "project" && (
         <OperationalProjectPanel
+          companyId={linkedCompany?.id ?? null}
           companyName={linkedCompany?.name ?? null}
           companyValues={linkedCompany?.custom_fields ?? null}
           companyDefinitions={companyDefinitions}
@@ -880,44 +905,55 @@ export function DealSlideOver({
             className="space-y-3 rounded-md border border-slate-200 bg-slate-50/70 p-3.5"
           >
             <p className="text-xs font-semibold text-slate-900">
-              Registrar resumen estructurado (máx. 280 caracteres)
+              Registrar actividad o nota interna (máx. 280 caracteres)
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <select
                 value={summaryType}
                 onChange={(e) =>
-                  setSummaryType(e.target.value as "call_summary" | "meeting_summary")
+                  setSummaryType(
+                    e.target.value as "call_summary" | "meeting_summary" | "internal_note"
+                  )
                 }
                 className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
               >
                 <option value="call_summary">Llamada comercial</option>
                 <option value="meeting_summary">Reunión / Demo</option>
+                <option value="internal_note">Nota interna</option>
               </select>
+              {summaryType !== "internal_note" && (
+                <Input
+                  required
+                  placeholder="Resultado (ej. Pide presupuesto)"
+                  value={summaryOutcome}
+                  onChange={(e) => setSummaryOutcome(e.target.value)}
+                  className="h-8 text-xs"
+                />
+              )}
+            </div>
+            {summaryType !== "internal_note" && (
               <Input
-                required
-                placeholder="Resultado (ej. Pide presupuesto)"
-                value={summaryOutcome}
-                onChange={(e) => setSummaryOutcome(e.target.value)}
+                placeholder="Objeciones separadas por coma (opcional)"
+                value={summaryObjections}
+                onChange={(e) => setSummaryObjections(e.target.value)}
                 className="h-8 text-xs"
               />
-            </div>
-            <Input
-              placeholder="Objeciones separadas por coma (opcional)"
-              value={summaryObjections}
-              onChange={(e) => setSummaryObjections(e.target.value)}
-              className="h-8 text-xs"
-            />
+            )}
             <div className="flex items-center gap-2">
               <Input
                 required
                 maxLength={280}
-                placeholder="Síntesis en 1 línea..."
+                placeholder={
+                  summaryType === "internal_note"
+                    ? "Escribe una nota interna breve..."
+                    : "Síntesis en 1 línea..."
+                }
                 value={summaryOneLiner}
                 onChange={(e) => setSummaryOneLiner(e.target.value)}
                 className="h-8 flex-1 text-xs"
               />
               <Button type="submit" size="sm" disabled={savingSummary}>
-                Registrar
+                Guardar
               </Button>
             </div>
           </form>

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Check, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, Check, Trash2 } from "lucide-react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
 import { InlineField } from "@/components/crm/inline-field";
@@ -56,6 +57,8 @@ const LEAD_SOURCES = [
 
 const OTHER_DEPT_SENTINEL = "__other__";
 
+type ContactTabKey = "datos" | "variables" | "actividad";
+
 export function ContactSlideOver({
   contact,
   onClose,
@@ -68,24 +71,39 @@ export function ContactSlideOver({
   onDefinitionCreated,
   onDefinitionUpdated,
 }: ContactSlideOverProps) {
+  const [tab, setTab] = useState<ContactTabKey>("datos");
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [editingOtherDept, setEditingOtherDept] = useState(false);
   const [customDeptDraft, setCustomDeptDraft] = useState("");
   const [deptSavedFlash, setDeptSavedFlash] = useState(false);
 
+  const contactId = contact?.id ?? null;
+
   const questionnaire = useSendQuestionnaire({
     entityType: "contact",
-    entityId: contact?.id ?? "",
+    entityId: contactId ?? "",
     recipients: contact ? [contact] : [],
-    preferredContactId: contact?.id ?? null,
+    preferredContactId: contactId,
     companyId: contact?.company_id ?? null,
     onSent: () => {
-      if (contact) {
-        void getContactActivitiesAction(contact.id).then(setActivities);
+      if (contactId) {
+        void getContactActivitiesAction(contactId).then(setActivities);
       }
     },
   });
+
+  useEffect(() => {
+    if (!contactId) return;
+    setTab("datos");
+    let active = true;
+    void getContactActivitiesAction(contactId).then((res) => {
+      if (active) setActivities(res);
+    });
+    return () => {
+      active = false;
+    };
+  }, [contactId]);
 
   useEffect(() => {
     if (!contact) return;
@@ -94,14 +112,6 @@ export function ContactSlideOver({
       (CONTACT_DEPARTMENTS as readonly string[]).includes(contact.department);
     setEditingOtherDept(!isPreset);
     setCustomDeptDraft(!isPreset ? contact.department ?? "" : "");
-
-    let active = true;
-    void getContactActivitiesAction(contact.id).then((res) => {
-      if (active) setActivities(res);
-    });
-    return () => {
-      active = false;
-    };
   }, [contact]);
 
   if (!contact) return null;
@@ -175,6 +185,12 @@ export function ContactSlideOver({
       ? contact.department!
       : "";
 
+  const CONTACT_TABS: { key: ContactTabKey; label: string }[] = [
+    { key: "datos", label: "Datos" },
+    { key: "variables", label: "Variables" },
+    { key: "actividad", label: `Actividad (${activities.length})` },
+  ];
+
   return (
     <SlideOver
       open={Boolean(contact)}
@@ -204,8 +220,39 @@ export function ContactSlideOver({
       }
     >
       <QuestionnaireFeedbackArea state={questionnaire} />
-      <div className="space-y-6">
-        {/* Identidad */}
+
+      <div className="mb-5 flex flex-wrap gap-1 border-b border-[#E2E8F0] pb-2">
+        {CONTACT_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`rounded-[4px] px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+              tab === t.key
+                ? "bg-[#1658F5] text-white"
+                : "text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "datos" && (
+        <div className="space-y-6">
+          {contact.company_id && (
+            <div>
+              <Link
+                href={`/companies?id=${contact.company_id}`}
+                className="inline-flex items-center gap-1 rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1 text-xs font-semibold text-[#1658F5] transition-colors hover:border-[#1658F5]"
+              >
+                Ver empresa asociada
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            </div>
+          )}
+
+          {/* Identidad */}
         <div className="space-y-1.5">
           <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
             Datos del contacto
@@ -333,8 +380,10 @@ export function ContactSlideOver({
             />
           </div>
         </div>
+      </div>
+      )}
 
-        {/* Variables personalizadas */}
+      {tab === "variables" && (
         <CustomFieldsPanel
           entityType="contact"
           definitions={definitions}
@@ -343,10 +392,9 @@ export function ContactSlideOver({
           onDefinitionCreated={onDefinitionCreated}
           onDefinitionUpdated={onDefinitionUpdated}
         />
+      )}
 
-        {/* Timeline */}
-        <ActivityMiniList activities={activities} />
-      </div>
+      {tab === "actividad" && <ActivityMiniList activities={activities} />}
     </SlideOver>
   );
 }

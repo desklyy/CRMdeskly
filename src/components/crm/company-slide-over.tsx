@@ -335,12 +335,15 @@ export function CompanySlideOver({
             ) : (
               <div className="divide-y divide-slate-100 rounded-md border border-slate-200 bg-white">
                 {deals.map((d) => (
-                  <div
+                  <Link
                     key={d.id}
-                    className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs"
+                    href={`/pipelines?deal=${d.id}`}
+                    className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs transition-colors hover:bg-slate-50"
                   >
                     <div className="min-w-0">
-                      <p className="truncate font-medium text-slate-900">{d.title}</p>
+                      <p className="truncate font-medium text-slate-900 hover:text-[#1658F5]">
+                        {d.title}
+                      </p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         {d.stage_name && (
                           <Badge variant="default">{d.stage_name}</Badge>
@@ -365,7 +368,7 @@ export function CompanySlideOver({
                     <span className="shrink-0 font-semibold text-slate-900">
                       {formatCurrencyEUR(d.amount)}
                     </span>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}

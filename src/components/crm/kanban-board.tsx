@@ -76,6 +76,7 @@ export function KanbanBoard({
   const [selectedDealId, setSelectedDealId] = useState<string | null>(
     searchParams.get("deal")
   );
+  const [onlyQuestionnaire, setOnlyQuestionnaire] = useState(false);
   const [newPropOpen, setNewPropOpen] = useState(false);
 
   // Quick create deal modal
@@ -180,6 +181,12 @@ export function KanbanBoard({
 
     for (const d of deals) {
       if (d.pipeline_id !== activePipeline?.id) continue;
+      if (
+        onlyQuestionnaire &&
+        d.custom_fields?.cuestionario_completado !== true
+      ) {
+        continue;
+      }
       const col = map.get(d.stage_id);
       if (col) col.push(d);
     }
@@ -188,7 +195,7 @@ export function KanbanBoard({
       list.sort((a, b) => a.position - b.position);
     }
     return map;
-  }, [deals, pipelineStages, activePipeline]);
+  }, [deals, pipelineStages, activePipeline, onlyQuestionnaire]);
 
   const selectedDeal = useMemo(
     () => deals.find((d) => d.id === selectedDealId) ?? null,
@@ -362,6 +369,17 @@ export function KanbanBoard({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => setOnlyQuestionnaire((v) => !v)}
+            className={`h-8 rounded-[4px] border px-2.5 text-xs font-semibold transition-colors ${
+              onlyQuestionnaire
+                ? "border-emerald-600 bg-emerald-50 text-emerald-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {onlyQuestionnaire ? "Cuestionario ✓ (activo)" : "Solo con cuestionario"}
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -462,6 +480,26 @@ export function KanbanBoard({
                                   <p className="mt-1 truncate text-xs text-slate-500">
                                     {companyName}
                                   </p>
+                                )}
+
+                                {(deal.custom_fields?.cuestionario_completado === true ||
+                                  deal.next_action) && (
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                    {deal.custom_fields?.cuestionario_completado ===
+                                      true && (
+                                      <Badge
+                                        variant="success"
+                                        className="text-[10px]"
+                                      >
+                                        Cuestionario ✓
+                                      </Badge>
+                                    )}
+                                    {deal.next_action && (
+                                      <span className="truncate text-[10px] font-medium text-slate-500">
+                                        Próx.: {deal.next_action}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
 
                                 <div className="mt-2.5 flex items-center justify-between gap-2">

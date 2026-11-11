@@ -13,7 +13,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, ArrowUpRight, TrendingUp, Users, Wallet, Target } from "lucide-react";
+import {
+  Activity,
+  ArrowUpRight,
+  CalendarClock,
+  TrendingUp,
+  Users,
+  Wallet,
+  Target,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useRealtime } from "@/components/providers/realtime-provider";
 import { formatCurrencyEUR } from "@/lib/crm/custom-fields";
@@ -41,10 +49,20 @@ export interface FunnelPoint {
   value: number;
 }
 
+export interface NextActionItem {
+  dealId: string;
+  dealTitle: string;
+  companyName: string | null;
+  nextAction: string | null;
+  nextActionDate: string | null;
+  amount: number;
+}
+
 interface DashboardViewProps {
   kpis: DashboardKPIs;
   monthlySeries: MonthlyPoint[];
   funnelSeries: FunnelPoint[];
+  nextActions: NextActionItem[];
   initialActivities: ActivityRow[];
   profileNames: Record<string, string>;
 }
@@ -55,6 +73,7 @@ const EVENT_LABELS: Record<string, string> = {
   deal_created: "Negocio creado",
   variable_updated: "Variable actualizada",
   lead_ingested: "Lead captado",
+  questionnaire_completed: "Cuestionario completado",
   stage_changed: "Cambio de etapa",
   quote_created: "Presupuesto creado",
   quote_updated: "Presupuesto actualizado",
@@ -67,6 +86,7 @@ const EVENT_LABELS: Record<string, string> = {
   meeting_cancelled: "Reunión cancelada",
   call_summary: "Resumen de llamada",
   meeting_summary: "Resumen de reunión",
+  internal_note: "Nota interna",
 };
 
 const ACTOR_BADGE: Record<
@@ -83,9 +103,11 @@ export function DashboardView({
   kpis,
   monthlySeries,
   funnelSeries,
+  nextActions,
   initialActivities,
   profileNames,
 }: DashboardViewProps) {
+  const todayIso = new Date().toISOString().slice(0, 10);
   const { subscribe } = useRealtime();
   const [activities, setActivities] = useState<ActivityRow[]>(initialActivities);
 
@@ -166,6 +188,85 @@ export function DashboardView({
           </p>
           <p className="mt-1 text-[11px] text-[#64748B]">Media sobre negocios valorados</p>
         </div>
+      </div>
+
+      {/* Próximas acciones */}
+      <div className="rounded-[4px] border border-[#E2E8F0] bg-white p-[30px]">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold tracking-[-0.02em] text-[#0F172A]">
+              <CalendarClock className="h-4 w-4 text-[#1658F5]" />
+              Próximas acciones pendientes
+            </h2>
+            <p className="text-xs text-[#64748B]">
+              Negocios abiertos con seguimiento o fecha programada
+            </p>
+          </div>
+          <Link
+            href="/pipelines"
+            className="text-xs font-semibold text-[#1658F5] hover:underline"
+          >
+            Ver todos en Pipelines →
+          </Link>
+        </div>
+
+        {nextActions.length === 0 ? (
+          <p className="text-xs text-[#64748B]">
+            Sin acciones pendientes registradas. Añade una «Siguiente acción» dentro de cualquier negocio.
+          </p>
+        ) : (
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+            {nextActions.map((item) => {
+              const isOverdue =
+                Boolean(item.nextActionDate) && item.nextActionDate! < todayIso;
+              const isToday = item.nextActionDate === todayIso;
+              return (
+                <Link
+                  key={item.dealId}
+                  href={`/pipelines?deal=${item.dealId}`}
+                  className="flex flex-col justify-between rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] p-3 transition-colors hover:border-[#1658F5]"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge
+                        variant={
+                          isOverdue
+                            ? "destructive"
+                            : isToday
+                              ? "warning"
+                              : "default"
+                        }
+                        className="text-[10px]"
+                      >
+                        {item.nextActionDate
+                          ? isOverdue
+                            ? `Vencida · ${item.nextActionDate}`
+                            : isToday
+                              ? "Hoy"
+                              : item.nextActionDate
+                          : "Sin fecha"}
+                      </Badge>
+                      <span className="text-[11px] font-semibold text-emerald-700">
+                        {formatCurrencyEUR(item.amount)}
+                      </span>
+                    </div>
+                    <p className="mt-2 truncate text-xs font-semibold text-[#0F172A]">
+                      {item.dealTitle}
+                    </p>
+                    {item.companyName && (
+                      <p className="truncate text-[11px] text-[#64748B]">
+                        {item.companyName}
+                      </p>
+                    )}
+                  </div>
+                  <p className="mt-2 line-clamp-2 text-[11px] font-medium text-[#334155]">
+                    {item.nextAction || "Seguimiento programado"}
+                  </p>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Charts + Live Timeline */}

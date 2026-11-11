@@ -3,16 +3,21 @@
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  ArrowUpRight,
   Building2,
+  Check,
   CheckCircle2,
   ClipboardList,
   Cpu,
   Layers,
   Lock,
   Pencil,
+  Plus,
   Server,
   ShieldCheck,
+  Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +40,7 @@ export interface CompanyDealSummary {
 }
 
 interface OperationalProjectPanelProps {
+  companyId?: string | null;
   companyName?: string | null;
   companyValues?: Record<string, Json> | null;
   companyDefinitions?: CustomFieldDefinition[];
@@ -147,7 +153,47 @@ function parseDepartmentsAndProcedures(
   return Array.from(byName.values());
 }
 
+function normalizeWorkersBadge(raw: string): string | null {
+  const clean = raw.trim();
+  if (!clean) return null;
+  if (/^\d+$/.test(clean)) return `${clean} trab.`;
+  return clean;
+}
+
+function serializeDepartments(list: ParsedDepartment[]): {
+  deptsText: string | null;
+  procsText: string | null;
+} {
+  if (list.length === 0) {
+    return { deptsText: null, procsText: null };
+  }
+
+  const deptsText = list
+    .map((d) => (d.workers ? `${d.name} (${d.workers})` : d.name))
+    .join(", ");
+
+  const hasAnyProc = list.some((d) => Boolean(d.procedures && d.procedures.trim()));
+  const procsText = hasAnyProc
+    ? list
+        .map((d) => {
+          const prefix = d.workers ? `${d.name} (${d.workers})` : d.name;
+          const rawProc = (d.procedures ?? "").trim();
+          const formattedProc = rawProc
+            ? rawProc
+                .split(/\r?\n/)
+                .map((l, idx) => (idx === 0 ? l.trim() : `  ${l.trim()}`))
+                .join("\n")
+            : "Sin procedimientos detallados";
+          return `• ${prefix}: ${formattedProc}`;
+        })
+        .join("\n")
+    : null;
+
+  return { deptsText, procsText };
+}
+
 export function OperationalProjectPanel({
+  companyId,
   companyName,
   companyValues,
   companyDefinitions = [],
@@ -161,6 +207,12 @@ export function OperationalProjectPanel({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draftValue, setDraftValue] = useState("");
   const [editingDeptsRaw, setEditingDeptsRaw] = useState(false);
+  const [editingDeptIdx, setEditingDeptIdx] = useState<number | null>(null);
+  const [deptDraftName, setDeptDraftName] = useState("");
+  const [deptDraftWorkers, setDeptDraftWorkers] = useState("");
+  const [deptDraftProcs, setDeptDraftProcs] = useState("");
+  const [addingDept, setAddingDept] = useState(false);
+  const [savingDeptList, setSavingDeptList] = useState(false);
 
   const cVals = companyValues ?? {};
   const dVals = dealValues ?? {};
@@ -219,6 +271,73 @@ export function OperationalProjectPanel({
     if (onUpdateDealField) {
       await onUpdateDealField(key, trimmed || null);
     }
+  }
+
+  async function persistDepartmentList(nextList: ParsedDepartment[]) {
+    if (!onUpdateCompanyField) return;
+    setSavingDeptList(true);
+    try {
+      const { deptsText: nextDepts, procsText: nextProcs } = serializeDepartments(nextList);
+      await onUpdateCompanyField("departamentos_empresa", nextDepts);
+      await onUpdateCompanyField("procedimientos_por_departamento", nextProcs);
+    } finally {
+      setSavingDeptList(false);
+    }
+  }
+
+  function openEditDept(idx: number, dept: ParsedDepartment) {
+    setAddingDept(false);
+    setEditingDeptIdx(idx);
+    setDeptDraftName(dept.name);
+    setDeptDraftWorkers(dept.workers ? dept.workers.replace(/\s*trab\.?$/i, "").trim() : "");
+    setDeptDraftProcs(dept.procedures ?? "");
+  }
+
+  function openAddDept() {
+    setEditingDeptIdx(null);
+    setAddingDept(true);
+    setDeptDraftName("");
+    setDeptDraftWorkers("");
+    setDeptDraftProcs("");
+  }
+
+  async function saveEditedDept(idx: number) {
+    const cleanName = deptDraftName.trim();
+    if (!cleanName) return;
+    const nextList = parsedDepts.map((item, i) =>
+      i === idx
+        ? {
+            name: cleanName,
+            workers: normalizeWorkersBadge(deptDraftWorkers),
+            procedures: deptDraftProcs.trim() || null,
+          }
+        : item
+    );
+    setEditingDeptIdx(null);
+    await persistDepartmentList(nextList);
+  }
+
+  async function saveNewDept() {
+    const cleanName = deptDraftName.trim();
+    if (!cleanName) return;
+    const nextList = [
+      ...parsedDepts,
+      {
+        name: cleanName,
+        workers: normalizeWorkersBadge(deptDraftWorkers),
+        procedures: deptDraftProcs.trim() || null,
+      },
+    ];
+    setAddingDept(false);
+    await persistDepartmentList(nextList);
+  }
+
+  async function removeDeptAt(idx: number) {
+    const target = parsedDepts[idx];
+    if (!target) return;
+    if (!window.confirm(`¿Quitar el departamento "${target.name}"?`)) return;
+    if (editingDeptIdx === idx) setEditingDeptIdx(null);
+    await persistDepartmentList(parsedDepts.filter((_, i) => i !== idx));
   }
 
   function renderEditableTextField(
@@ -321,6 +440,15 @@ export function OperationalProjectPanel({
             <span className="text-xs font-semibold text-slate-900">
               {companyName ? `Diagnóstico · ${companyName}` : "Diagnóstico Operativo"}
             </span>
+            {companyId && (
+              <Link
+                href={`/companies?id=${companyId}`}
+                className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#1658F5] hover:underline"
+              >
+                Ver empresa
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             {dealCompleted === true && (
@@ -417,55 +545,200 @@ export function OperationalProjectPanel({
       {/* SUB-VISTA 1: DEPARTAMENTOS Y PROCEDIMIENTOS */}
       {subView === "departamentos" && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Áreas y procedimientos
             </h4>
             {onUpdateCompanyField && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setEditingDeptsRaw((v) => !v)}
-              >
-                <Pencil className="h-3 w-3" />
-                {editingDeptsRaw ? "Ver tarjetas" : "Editar texto"}
-              </Button>
+              <div className="flex items-center gap-1.5">
+                {!editingDeptsRaw && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={savingDeptList}
+                    onClick={openAddDept}
+                  >
+                    <Plus className="h-3 w-3" />
+                    Añadir
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={savingDeptList}
+                  onClick={() => {
+                    setEditingDeptIdx(null);
+                    setAddingDept(false);
+                    setEditingDeptsRaw((v) => !v);
+                  }}
+                >
+                  <Pencil className="h-3 w-3" />
+                  {editingDeptsRaw ? "Ver tarjetas" : "Editar texto"}
+                </Button>
+              </div>
             )}
           </div>
 
           {!editingDeptsRaw ? (
-            parsedDepts.length === 0 ? (
-              <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-500">
-                Aún no se han registrado departamentos ni procedimientos para{" "}
-                {companyName || "esta empresa"}.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {parsedDepts.map((dept) => (
-                  <div
-                    key={dept.name}
-                    className="rounded-md border border-slate-200 bg-white p-3"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-slate-900">
-                        {dept.name}
-                      </span>
-                      {dept.workers && (
-                        <Badge variant="brand">{dept.workers}</Badge>
+            <div className="space-y-2">
+              {addingDept && (
+                <div className="space-y-2 rounded-md border border-[#1658F5]/40 bg-slate-50/70 p-3">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_110px]">
+                    <input
+                      type="text"
+                      placeholder="Nombre del departamento (ej. Logística)"
+                      value={deptDraftName}
+                      onChange={(e) => setDeptDraftName(e.target.value)}
+                      className="h-7 rounded border border-slate-300 bg-white px-2 text-xs text-slate-900 focus:border-[#1658F5] focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Nº trab."
+                      value={deptDraftWorkers}
+                      onChange={(e) => setDeptDraftWorkers(e.target.value)}
+                      className="h-7 rounded border border-slate-300 bg-white px-2 text-xs text-slate-900 focus:border-[#1658F5] focus:outline-none"
+                    />
+                  </div>
+                  <textarea
+                    rows={3}
+                    placeholder="Procedimientos que realizan..."
+                    value={deptDraftProcs}
+                    onChange={(e) => setDeptDraftProcs(e.target.value)}
+                    className="w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs leading-relaxed text-slate-900 focus:border-[#1658F5] focus:outline-none"
+                  />
+                  <div className="flex justify-end gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setAddingDept(false)}
+                    >
+                      <X className="h-3 w-3" />
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={savingDeptList || !deptDraftName.trim()}
+                      onClick={() => void saveNewDept()}
+                    >
+                      <Check className="h-3 w-3" />
+                      Guardar
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {parsedDepts.length === 0 && !addingDept ? (
+                <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-500">
+                  Aún no se han registrado departamentos ni procedimientos para{" "}
+                  {companyName || "esta empresa"}.
+                </div>
+              ) : (
+                parsedDepts.map((dept, idx) => {
+                  const isEditingThis = editingDeptIdx === idx;
+                  return (
+                    <div
+                      key={`${dept.name}-${idx}`}
+                      className="rounded-md border border-slate-200 bg-white p-3"
+                    >
+                      {isEditingThis ? (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_110px]">
+                            <input
+                              type="text"
+                              value={deptDraftName}
+                              onChange={(e) => setDeptDraftName(e.target.value)}
+                              className="h-7 rounded border border-slate-300 bg-white px-2 text-xs font-medium text-slate-900 focus:border-[#1658F5] focus:outline-none"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Nº trab."
+                              value={deptDraftWorkers}
+                              onChange={(e) => setDeptDraftWorkers(e.target.value)}
+                              className="h-7 rounded border border-slate-300 bg-white px-2 text-xs text-slate-900 focus:border-[#1658F5] focus:outline-none"
+                            />
+                          </div>
+                          <textarea
+                            rows={3}
+                            placeholder="Procedimientos que realizan..."
+                            value={deptDraftProcs}
+                            onChange={(e) => setDeptDraftProcs(e.target.value)}
+                            className="w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs leading-relaxed text-slate-900 focus:border-[#1658F5] focus:outline-none"
+                          />
+                          <div className="flex justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setEditingDeptIdx(null)}
+                            >
+                              <X className="h-3 w-3" />
+                              Cancelar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={savingDeptList || !deptDraftName.trim()}
+                              onClick={() => void saveEditedDept(idx)}
+                            >
+                              <Check className="h-3 w-3" />
+                              Guardar
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-900">
+                              {dept.name}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {dept.workers && (
+                                <Badge variant="brand">{dept.workers}</Badge>
+                              )}
+                              {onUpdateCompanyField && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={savingDeptList}
+                                    onClick={() => openEditDept(idx, dept)}
+                                    title="Editar departamento"
+                                    className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={savingDeptList}
+                                    onClick={() => void removeDeptAt(idx)}
+                                    title="Quitar departamento"
+                                    className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <p
+                            className={`mt-1.5 text-xs leading-relaxed whitespace-pre-wrap ${
+                              dept.procedures
+                                ? "text-slate-600"
+                                : "italic text-slate-400"
+                            }`}
+                          >
+                            {dept.procedures || "Sin procedimientos especificados"}
+                          </p>
+                        </>
                       )}
                     </div>
-                    <p
-                      className={`mt-1.5 text-xs leading-relaxed whitespace-pre-wrap ${
-                        dept.procedures ? "text-slate-600" : "italic text-slate-400"
-                      }`}
-                    >
-                      {dept.procedures || "Sin procedimientos especificados"}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )
+                  );
+                })
+              )}
+            </div>
           ) : (
             <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
               <div>
@@ -771,14 +1044,16 @@ export function OperationalProjectPanel({
                     const vol = asText(d.custom_fields?.volumen_mensual);
                     const tasks = asText(d.custom_fields?.tareas_manuales);
                     return (
-                      <div
+                      <Link
                         key={d.id}
-                        className="rounded-md border border-slate-200 bg-white p-3"
+                        href={`/pipelines?deal=${d.id}`}
+                        className="block rounded-md border border-slate-200 bg-white p-3 transition-colors hover:border-[#1658F5]/50 hover:bg-slate-50/50"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="truncate text-xs font-semibold text-slate-900">
-                              {d.title}
+                            <p className="flex items-center gap-1 truncate text-xs font-semibold text-slate-900">
+                              <span className="truncate">{d.title}</span>
+                              <ArrowUpRight className="h-3 w-3 shrink-0 text-[#1658F5]" />
                             </p>
                             <div className="mt-1 flex flex-wrap items-center gap-1.5">
                               {d.stage_name && (
@@ -811,7 +1086,7 @@ export function OperationalProjectPanel({
                             {tasks}
                           </p>
                         )}
-                      </div>
+                      </Link>
                     );
                   })}
                 </div>

@@ -438,14 +438,18 @@ export async function logStructuredSummaryAction(input: {
   dealId: string;
   companyId: string | null;
   contactId: string | null;
-  eventType: "call_summary" | "meeting_summary";
+  eventType: "call_summary" | "meeting_summary" | "internal_note";
   outcome: string;
   objections: string[];
   summaryOneLiner: string;
 }) {
   const { supabase, user } = await requireUser();
   const summary = input.summaryOneLiner.trim().slice(0, 280);
-  if (!input.outcome.trim() || !summary) {
+  const effectiveOutcome =
+    input.eventType === "internal_note"
+      ? input.outcome.trim() || "Nota"
+      : input.outcome.trim();
+  if (!effectiveOutcome || !summary) {
     return { error: "El resultado y el resumen breve son obligatorios." };
   }
 
@@ -464,7 +468,7 @@ export async function logStructuredSummaryAction(input: {
     dealId: input.dealId,
     eventType: input.eventType,
     metadata: {
-      outcome: input.outcome.trim(),
+      outcome: effectiveOutcome,
       objections: input.objections,
       summary_one_liner: summary,
     },

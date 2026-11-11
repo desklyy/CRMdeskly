@@ -3,6 +3,7 @@ import {
   DashboardView,
   type FunnelPoint,
   type MonthlyPoint,
+  type NextActionItem,
 } from "@/components/crm/dashboard-view";
 
 export default async function DashboardPage() {
@@ -15,32 +16,42 @@ export default async function DashboardPage() {
     1
   ).toISOString();
 
-  const [leadsRes, dealsRes, pipelinesRes, stagesRes, activitiesRes, profilesRes] =
-    await Promise.all([
-      supabase
-        .from("contacts")
-        .select("id", { count: "exact", head: true })
-        .gte("created_at", startOfMonthIso),
-      supabase
-        .from("deals")
-        .select("id, amount, status, stage_id, pipeline_id, created_at, closed_at"),
-      supabase
-        .from("pipelines")
-        .select("id, is_default")
-        .eq("is_active", true)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("pipeline_stages")
-        .select("id, pipeline_id, name, stage_order")
-        .eq("is_active", true)
-        .order("stage_order", { ascending: true }),
-      supabase
-        .from("activities")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(30),
-      supabase.from("profiles").select("id, full_name"),
-    ]);
+  const [
+    leadsRes,
+    dealsRes,
+    pipelinesRes,
+    stagesRes,
+    activitiesRes,
+    profilesRes,
+    companiesRes,
+  ] = await Promise.all([
+    supabase
+      .from("contacts")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", startOfMonthIso),
+    supabase
+      .from("deals")
+      .select(
+        "id, title, amount, status, stage_id, pipeline_id, created_at, closed_at, next_action, next_action_date, company_id"
+      ),
+    supabase
+      .from("pipelines")
+      .select("id, is_default")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("pipeline_stages")
+      .select("id, pipeline_id, name, stage_order")
+      .eq("is_active", true)
+      .order("stage_order", { ascending: true }),
+    supabase
+      .from("activities")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(30),
+    supabase.from("profiles").select("id, full_name"),
+    supabase.from("companies").select("id, name"),
+  ]);
 
   const deals = dealsRes.data ?? [];
   const openDeals = deals.filter((d) => d.status === "open");
@@ -96,6 +107,28 @@ export default async function DashboardPage() {
     profileNames[p.id] = p.full_name;
   }
 
+  const companyNames = new Map(
+    (companiesRes.data ?? []).map((c) => [c.id, c.name])
+  );
+
+  const nextActions: NextActionItem[] = openDeals
+    .filter((d) => Boolean(d.next_action || d.next_action_date))
+    .sort((a, b) => {
+      if (!a.next_action_date && !b.next_action_date) return 0;
+      if (!a.next_action_date) return 1;
+      if (!b.next_action_date) return -1;
+      return a.next_action_date.localeCompare(b.next_action_date);
+    })
+    .slice(0, 8)
+    .map((d) => ({
+      dealId: d.id,
+      dealTitle: d.title,
+      companyName: d.company_id ? companyNames.get(d.company_id) ?? null : null,
+      nextAction: d.next_action,
+      nextActionDate: d.next_action_date,
+      amount: Number(d.amount || 0),
+    }));
+
   return (
     <DashboardView
       kpis={{
@@ -107,6 +140,7 @@ export default async function DashboardPage() {
       }}
       monthlySeries={monthlySeries}
       funnelSeries={funnelSeries}
+      nextActions={nextActions}
       initialActivities={activitiesRes.data ?? []}
       profileNames={profileNames}
     />

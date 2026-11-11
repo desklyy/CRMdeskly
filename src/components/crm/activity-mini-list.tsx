@@ -9,11 +9,15 @@ type ActivityRow = Database["public"]["Tables"]["activities"]["Row"];
 const EVENT_LABELS: Record<string, string> = {
   company_created: "Empresa creada",
   contact_created: "Contacto creado",
+  deal_created: "Negocio creado",
   variable_updated: "Variable actualizada",
   lead_ingested: "Lead captado",
   questionnaire_completed: "Cuestionario completado",
   stage_changed: "Cambio de etapa",
+  quote_created: "Presupuesto creado",
+  quote_updated: "Presupuesto actualizado",
   quote_sent: "Presupuesto enviado",
+  quote_status_changed: "Estado presupuesto",
   email_received: "Email recibido",
   email_sent: "Email enviado",
   meeting_scheduled: "Reunión agendada",
@@ -21,7 +25,28 @@ const EVENT_LABELS: Record<string, string> = {
   meeting_cancelled: "Reunión cancelada",
   call_summary: "Resumen de llamada",
   meeting_summary: "Resumen de reunión",
+  internal_note: "Nota interna",
 };
+
+function formatActivityDetail(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (!metadata || Object.keys(metadata).length === 0) return null;
+  const summary =
+    typeof metadata.summary_one_liner === "string"
+      ? metadata.summary_one_liner
+      : typeof metadata.subject === "string"
+        ? metadata.subject
+        : typeof metadata.title === "string"
+          ? metadata.title
+          : null;
+  const outcome =
+    typeof metadata.outcome === "string" && metadata.outcome !== "Nota"
+      ? metadata.outcome
+      : null;
+
+  if (summary && outcome) return `${outcome} · ${summary}`;
+  if (summary) return summary;
+  return JSON.stringify(metadata);
+}
 
 export function ActivityMiniList({ activities }: { activities: ActivityRow[] }) {
   return (
@@ -53,11 +78,17 @@ export function ActivityMiniList({ activities }: { activities: ActivityRow[] }) 
                       {act.actor_type}
                     </Badge>
                   </div>
-                  {Object.keys(act.metadata ?? {}).length > 0 && (
-                    <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
-                      {JSON.stringify(act.metadata)}
-                    </p>
-                  )}
+                  {(() => {
+                    const detail = formatActivityDetail(
+                      act.metadata as Record<string, unknown> | null | undefined
+                    );
+                    if (!detail) return null;
+                    return (
+                      <p className="mt-0.5 break-words text-[11px] text-slate-600">
+                        {detail}
+                      </p>
+                    );
+                  })()}
                 </div>
                 <span className="shrink-0 text-[11px] text-slate-400">{dateStr}</span>
               </li>
