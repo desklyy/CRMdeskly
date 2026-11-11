@@ -7,6 +7,7 @@ import {
   Briefcase,
   Building2,
   Calendar,
+  CheckSquare,
   Kanban,
   LayoutDashboard,
   Plus,
@@ -27,6 +28,7 @@ interface CommandPaletteProps {
 
 const ROUTES = [
   { href: "/", label: "Ir a Dashboard", icon: LayoutDashboard, keywords: "inicio kpis resumen" },
+  { href: "/tasks", label: "Ir a Tareas", icon: CheckSquare, keywords: "tareas pendientes seguimiento hoy" },
   { href: "/companies", label: "Ir a Empresas", icon: Building2, keywords: "cuentas clientes cif" },
   { href: "/contacts", label: "Ir a Contactos", icon: Users, keywords: "leads personas emails" },
   { href: "/pipelines", label: "Ir a Pipelines (Kanban)", icon: Kanban, keywords: "negocios deals embudo" },
@@ -35,6 +37,7 @@ const ROUTES = [
 ];
 
 const QUICK_ACTIONS = [
+  { href: "/tasks?new=1", label: "Crear nueva tarea", icon: Plus, keywords: "nueva tarea pendiente recordatorio" },
   { href: "/companies?new=1", label: "Crear nueva empresa", icon: Plus, keywords: "nueva empresa cuenta" },
   { href: "/contacts?new=1", label: "Crear nuevo contacto", icon: Plus, keywords: "nuevo contacto persona lead" },
   { href: "/pipelines?new=1", label: "Crear nuevo negocio", icon: Plus, keywords: "nuevo negocio deal oportunidad" },

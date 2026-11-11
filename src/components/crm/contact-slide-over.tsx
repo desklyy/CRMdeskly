@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
+import { EntityTasksPanel } from "@/components/crm/entity-tasks-panel";
 import {
   QuestionnaireFeedbackArea,
   SendQuestionnaireButton,
@@ -57,7 +58,7 @@ const LEAD_SOURCES = [
 
 const OTHER_DEPT_SENTINEL = "__other__";
 
-type ContactTabKey = "datos" | "variables" | "actividad";
+type ContactTabKey = "datos" | "variables" | "tareas" | "actividad";
 
 export function ContactSlideOver({
   contact,
@@ -188,6 +189,7 @@ export function ContactSlideOver({
   const CONTACT_TABS: { key: ContactTabKey; label: string }[] = [
     { key: "datos", label: "Datos" },
     { key: "variables", label: "Variables" },
+    { key: "tareas", label: "Tareas" },
     { key: "actividad", label: `Actividad (${activities.length})` },
   ];
 
@@ -391,6 +393,14 @@ export function ContactSlideOver({
           onUpdateField={saveCustom}
           onDefinitionCreated={onDefinitionCreated}
           onDefinitionUpdated={onDefinitionUpdated}
+        />
+      )}
+
+      {tab === "tareas" && (
+        <EntityTasksPanel
+          contactId={contact.id}
+          companyId={contact.company_id}
+          profiles={profiles}
         />
       )}
 

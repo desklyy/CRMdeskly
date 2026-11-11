@@ -11,6 +11,7 @@ import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
 import { OperationalProjectPanel } from "@/components/crm/operational-project-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
+import { EntityTasksPanel } from "@/components/crm/entity-tasks-panel";
 import { QuoteBuilder } from "@/components/crm/quote-builder";
 import {
   QuestionnaireFeedbackArea,
@@ -54,7 +55,7 @@ type ActivityRow = Database["public"]["Tables"]["activities"]["Row"];
 type EmailRow = Database["public"]["Tables"]["emails"]["Row"];
 type CalendarLinkRow = Database["public"]["Tables"]["calendar_event_links"]["Row"];
 
-type TabKey = "details" | "project" | "emails" | "meetings" | "quotes" | "timeline";
+type TabKey = "details" | "project" | "tasks" | "emails" | "meetings" | "quotes" | "timeline";
 
 type LinkedCompanyDetails = Pick<
   Database["public"]["Tables"]["companies"]["Row"],
@@ -348,6 +349,7 @@ export function DealSlideOver({
   const TABS: { key: TabKey; label: string }[] = [
     { key: "details", label: "Detalle" },
     { key: "project", label: "Proyecto" },
+    { key: "tasks", label: "Tareas" },
     { key: "emails", label: `Emails (${emails.length})` },
     { key: "meetings", label: `Reuniones (${calendarLinks.length})` },
     { key: "quotes", label: `Presupuestos (${quotes.length})` },
@@ -906,6 +908,15 @@ export function DealSlideOver({
             </div>
           )}
         </div>
+      )}
+
+      {tab === "tasks" && (
+        <EntityTasksPanel
+          dealId={deal.id}
+          companyId={deal.company_id}
+          contactId={deal.primary_contact_id}
+          profiles={profiles}
+        />
       )}
 
       {tab === "timeline" && (

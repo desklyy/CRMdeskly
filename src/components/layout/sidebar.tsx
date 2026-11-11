@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Building2,
   Calendar,
+  CheckSquare,
   Kanban,
   LayoutDashboard,
   LogOut,
@@ -28,6 +29,7 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/tasks", label: "Tareas", icon: CheckSquare },
   { href: "/companies", label: "Empresas", icon: Building2 },
   { href: "/contacts", label: "Contactos", icon: Users },
   { href: "/pipelines", label: "Pipelines", icon: Kanban },

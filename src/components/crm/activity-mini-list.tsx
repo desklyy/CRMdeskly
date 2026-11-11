@@ -26,6 +26,8 @@ const EVENT_LABELS: Record<string, string> = {
   call_summary: "Resumen de llamada",
   meeting_summary: "Resumen de reunión",
   internal_note: "Nota interna",
+  task_created: "Tarea creada",
+  task_completed: "Tarea completada",
 };
 
 function formatActivityDetail(metadata: Record<string, unknown> | null | undefined): string | null {

@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 
-type RealtimeTable = "deals" | "activities" | "custom_field_definitions";
+type RealtimeTable = "deals" | "activities" | "custom_field_definitions" | "tasks";
 type ChangeHandler = (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => void;
 
 interface RealtimeContextValue {
@@ -27,6 +27,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     deals: new Set(),
     activities: new Set(),
     custom_field_definitions: new Set(),
+    tasks: new Set(),
   });
 
   useEffect(() => {
@@ -68,6 +69,15 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         (payload) =>
           dispatch(
             "custom_field_definitions",
+            payload as RealtimePostgresChangesPayload<Record<string, unknown>>
+          )
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tasks" },
+        (payload) =>
+          dispatch(
+            "tasks",
             payload as RealtimePostgresChangesPayload<Record<string, unknown>>
           )
       )

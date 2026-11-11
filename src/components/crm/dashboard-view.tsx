@@ -62,12 +62,15 @@ export interface FunnelPoint {
 }
 
 export interface NextActionItem {
-  dealId: string;
-  dealTitle: string;
+  key: string;
+  kind: "task" | "deal_action";
+  href: string;
+  title: string;
+  subtitle: string | null;
   companyName: string | null;
   nextAction: string | null;
   nextActionDate: string | null;
-  amount: number;
+  amount: number | null;
 }
 
 interface DashboardViewProps {
@@ -532,20 +535,24 @@ export function DashboardView({
               Próximas acciones pendientes
             </h2>
             <p className="text-xs text-[#64748B]">
-              Negocios abiertos con seguimiento o fecha programada
+              Tareas pendientes y seguimientos programados en negocios
             </p>
           </div>
           <Link
-            href="/pipelines"
+            href="/tasks"
             className="text-xs font-semibold text-[#1658F5] hover:underline"
           >
-            Ver todos en Pipelines →
+            Ver todas en Tareas →
           </Link>
         </div>
 
         {nextActions.length === 0 ? (
           <p className="text-xs text-[#64748B]">
-            Sin acciones pendientes registradas. Añade una «Siguiente acción» dentro de cualquier negocio.
+            Sin acciones pendientes. Añade una tarea en{" "}
+            <Link href="/tasks" className="font-semibold text-[#1658F5] hover:underline">
+              Tareas
+            </Link>{" "}
+            o dentro de cualquier negocio.
           </p>
         ) : (
           <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
@@ -555,8 +562,8 @@ export function DashboardView({
               const isToday = item.nextActionDate === todayIso;
               return (
                 <Link
-                  key={item.dealId}
-                  href={`/pipelines?deal=${item.dealId}`}
+                  key={item.key}
+                  href={item.href}
                   className="flex flex-col justify-between rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] p-3 transition-colors hover:border-[#1658F5]"
                 >
                   <div>
@@ -579,12 +586,18 @@ export function DashboardView({
                               : item.nextActionDate
                           : "Sin fecha"}
                       </Badge>
-                      <span className="text-[11px] font-semibold text-emerald-700">
-                        {formatCurrencyEUR(item.amount)}
-                      </span>
+                      {item.amount !== null && item.amount > 0 ? (
+                        <span className="text-[11px] font-semibold text-emerald-700">
+                          {formatCurrencyEUR(item.amount)}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#64748B]">
+                          {item.kind === "task" ? "Tarea" : "Negocio"}
+                        </span>
+                      )}
                     </div>
                     <p className="mt-2 truncate text-xs font-semibold text-[#0F172A]">
-                      {item.dealTitle}
+                      {item.title}
                     </p>
                     {item.companyName && (
                       <p className="truncate text-[11px] text-[#64748B]">
@@ -592,9 +605,11 @@ export function DashboardView({
                       </p>
                     )}
                   </div>
-                  <p className="mt-2 line-clamp-2 text-[11px] font-medium text-[#334155]">
-                    {item.nextAction || "Seguimiento programado"}
-                  </p>
+                  {item.subtitle && (
+                    <p className="mt-2 line-clamp-2 text-[11px] font-medium text-[#334155]">
+                      {item.subtitle}
+                    </p>
+                  )}
                 </Link>
               );
             })}

@@ -27,9 +27,11 @@ export type CustomFieldType =
 export type DealStatus = "open" | "won" | "lost";
 export type DealPriority = "low" | "medium" | "high" | "urgent";
 export type QuoteStatus = "draft" | "sent" | "accepted" | "rejected" | "expired";
+export type TaskType = "call" | "email" | "meeting" | "quote" | "technical" | "follow_up" | "other";
+export type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled";
 export type EmailDirection = "inbound" | "outbound";
 export type ActorType = "user" | "ai_agent" | "webhook" | "system";
-export type ActivityEntityType = "company" | "contact" | "deal" | "quote" | "calendar_event";
+export type ActivityEntityType = "company" | "contact" | "deal" | "quote" | "calendar_event" | "task";
 export type ApiKeyPermission = "read" | "read_write";
 
 export type Database = {
@@ -725,6 +727,57 @@ export type Database = {
           is_active?: boolean;
           revoked_at?: string | null;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      tasks: {
+        Row: {
+          id: string;
+          title: string;
+          task_type: TaskType;
+          status: TaskStatus;
+          priority: DealPriority;
+          due_date: string | null;
+          completed_at: string | null;
+          deal_id: string | null;
+          company_id: string | null;
+          contact_id: string | null;
+          assigned_to: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          task_type?: TaskType;
+          status?: TaskStatus;
+          priority?: DealPriority;
+          due_date?: string | null;
+          completed_at?: string | null;
+          deal_id?: string | null;
+          company_id?: string | null;
+          contact_id?: string | null;
+          assigned_to?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          task_type?: TaskType;
+          status?: TaskStatus;
+          priority?: DealPriority;
+          due_date?: string | null;
+          completed_at?: string | null;
+          deal_id?: string | null;
+          company_id?: string | null;
+          contact_id?: string | null;
+          assigned_to?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };

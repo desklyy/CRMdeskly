@@ -13,6 +13,7 @@ import {
   type CompanyDealSummary,
 } from "@/components/crm/operational-project-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
+import { EntityTasksPanel } from "@/components/crm/entity-tasks-panel";
 import {
   QuestionnaireFeedbackArea,
   SendQuestionnaireButton,
@@ -57,7 +58,7 @@ const COMPANY_SIZES = [
   { value: "200+", label: "200+ empleados" },
 ];
 
-type CompanyTabKey = "resumen" | "proyecto" | "relaciones" | "actividad";
+type CompanyTabKey = "resumen" | "proyecto" | "tareas" | "relaciones" | "actividad";
 
 export function CompanySlideOver({
   company,
@@ -150,6 +151,7 @@ export function CompanySlideOver({
   const COMPANY_TABS: { key: CompanyTabKey; label: string }[] = [
     { key: "resumen", label: "Ficha" },
     { key: "proyecto", label: "Proyecto y Cuestionario" },
+    { key: "tareas", label: "Tareas" },
     { key: "relaciones", label: `Negocios y Contactos (${deals.length + contacts.length})` },
     { key: "actividad", label: `Actividad (${activities.length})` },
   ];
@@ -411,6 +413,10 @@ export function CompanySlideOver({
             )}
           </div>
         </div>
+      )}
+
+      {tab === "tareas" && (
+        <EntityTasksPanel companyId={company.id} profiles={profiles} />
       )}
 
       {tab === "actividad" && <ActivityMiniList activities={activities} />}
