@@ -12,7 +12,6 @@ import type {
   LeadStatus,
 } from "@/types/database";
 
-type CompanyRow = Database["public"]["Tables"]["companies"]["Row"];
 type CompanyUpdate = Database["public"]["Tables"]["companies"]["Update"];
 type ContactRow = Database["public"]["Tables"]["contacts"]["Row"];
 type ContactUpdate = Database["public"]["Tables"]["contacts"]["Update"];
@@ -585,41 +584,218 @@ export async function getContactActivitiesAction(contactId: string): Promise<Act
 // ---------------------------------------------------------------------------
 
 export interface GlobalSearchResult {
-  companies: Pick<CompanyRow, "id" | "name" | "domain">[];
-  contacts: Pick<ContactRow, "id" | "first_name" | "last_name" | "email">[];
-  deals: { id: string; title: string; amount: number; status: string }[];
+  companies: {
+    id: string;
+    name: string;
+    domain: string | null;
+    industry: string | null;
+    tax_id: string | null;
+  }[];
+  contacts: {
+    id: string;
+    first_name: string;
+    last_name: string | null;
+    email: string | null;
+    phone: string | null;
+    job_title: string | null;
+    company_name: string | null;
+  }[];
+  deals: {
+    id: string;
+    title: string;
+    amount: number;
+    status: string;
+    company_name: string | null;
+  }[];
+}
+
+function sanitizePostgrestToken(token: string): string {
+  return token.replace(/[,()%*\\]/g, "").trim();
 }
 
 export async function globalSearchAction(query: string): Promise<GlobalSearchResult> {
+  const { supabase } = await requireAuthenticatedUser();
   const term = query.trim();
+
   if (!term) {
+    const [companiesRes, contactsRes, dealsRes] = await Promise.all([
+      supabase
+        .from("companies")
+        .select("id, name, domain, industry, tax_id")
+        .order("updated_at", { ascending: false })
+        .limit(4),
+      supabase
+        .from("contacts")
+        .select("id, first_name, last_name, email, phone, job_title, company_id")
+        .order("updated_at", { ascending: false })
+        .limit(4),
+      supabase
+        .from("deals")
+        .select("id, title, amount, status, company_id")
+        .order("updated_at", { ascending: false })
+        .limit(4),
+    ]);
+
+    const companyIds = Array.from(
+      new Set(
+        [
+          ...(contactsRes.data ?? []).map((c) => c.company_id),
+          ...(dealsRes.data ?? []).map((d) => d.company_id),
+        ].filter((id): id is string => Boolean(id))
+      )
+    );
+
+    const companyNameMap = new Map<string, string>();
+    if (companyIds.length > 0) {
+      const { data: linkedCompanies } = await supabase
+        .from("companies")
+        .select("id, name")
+        .in("id", companyIds);
+      for (const comp of linkedCompanies ?? []) {
+        companyNameMap.set(comp.id, comp.name);
+      }
+    }
+
+    return {
+      companies: companiesRes.data ?? [],
+      contacts: (contactsRes.data ?? []).map((c) => ({
+        id: c.id,
+        first_name: c.first_name,
+        last_name: c.last_name,
+        email: c.email,
+        phone: c.phone,
+        job_title: c.job_title,
+        company_name: c.company_id ? (companyNameMap.get(c.company_id) ?? null) : null,
+      })),
+      deals: (dealsRes.data ?? []).map((d) => ({
+        id: d.id,
+        title: d.title,
+        amount: d.amount,
+        status: d.status,
+        company_name: d.company_id ? (companyNameMap.get(d.company_id) ?? null) : null,
+      })),
+    };
+  }
+
+  const tokens = term
+    .split(/\s+/)
+    .map(sanitizePostgrestToken)
+    .filter(Boolean)
+    .slice(0, 4);
+
+  if (tokens.length === 0) {
     return { companies: [], contacts: [], deals: [] };
   }
 
-  const { supabase } = await requireAuthenticatedUser();
+  let companiesQuery = supabase
+    .from("companies")
+    .select("id, name, domain, industry, tax_id");
+  for (const tok of tokens) {
+    companiesQuery = companiesQuery.or(
+      `name.ilike.%${tok}%,domain.ilike.%${tok}%,website.ilike.%${tok}%,tax_id.ilike.%${tok}%,industry.ilike.%${tok}%,billing_city.ilike.%${tok}%`
+    );
+  }
+
+  let contactsQuery = supabase
+    .from("contacts")
+    .select("id, first_name, last_name, email, phone, job_title, company_id");
+  for (const tok of tokens) {
+    contactsQuery = contactsQuery.or(
+      `first_name.ilike.%${tok}%,last_name.ilike.%${tok}%,email.ilike.%${tok}%,phone.ilike.%${tok}%,job_title.ilike.%${tok}%,department.ilike.%${tok}%`
+    );
+  }
+
+  let dealsQuery = supabase
+    .from("deals")
+    .select("id, title, amount, status, company_id");
+  for (const tok of tokens) {
+    dealsQuery = dealsQuery.or(
+      `title.ilike.%${tok}%,next_action.ilike.%${tok}%,lost_reason.ilike.%${tok}%`
+    );
+  }
 
   const [companiesRes, contactsRes, dealsRes] = await Promise.all([
-    supabase
-      .from("companies")
-      .select("id, name, domain")
-      .or(`name.ilike.%${term}%,domain.ilike.%${term}%,tax_id.ilike.%${term}%`)
-      .limit(5),
-    supabase
-      .from("contacts")
-      .select("id, first_name, last_name, email")
-      .or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%,email.ilike.%${term}%`)
-      .limit(5),
-    supabase
-      .from("deals")
-      .select("id, title, amount, status")
-      .ilike("title", `%${term}%`)
-      .limit(5),
+    companiesQuery.order("updated_at", { ascending: false }).limit(6),
+    contactsQuery.order("updated_at", { ascending: false }).limit(6),
+    dealsQuery.order("updated_at", { ascending: false }).limit(6),
   ]);
 
+  const companies = companiesRes.data ?? [];
+  const matchedCompanyIds = companies.map((c) => c.id);
+
+  // Also surface contacts & deals belonging to matched companies when searching by company name
+  let extraContacts: NonNullable<typeof contactsRes.data> = [];
+  let extraDeals: NonNullable<typeof dealsRes.data> = [];
+  if (matchedCompanyIds.length > 0) {
+    const [compContactsRes, compDealsRes] = await Promise.all([
+      supabase
+        .from("contacts")
+        .select("id, first_name, last_name, email, phone, job_title, company_id")
+        .in("company_id", matchedCompanyIds)
+        .limit(4),
+      supabase
+        .from("deals")
+        .select("id, title, amount, status, company_id")
+        .in("company_id", matchedCompanyIds)
+        .limit(4),
+    ]);
+    extraContacts = compContactsRes.data ?? [];
+    extraDeals = compDealsRes.data ?? [];
+  }
+
+  const mergedContactsMap = new Map<string, (typeof extraContacts)[number]>();
+  for (const c of [...(contactsRes.data ?? []), ...extraContacts]) {
+    if (!mergedContactsMap.has(c.id)) mergedContactsMap.set(c.id, c);
+  }
+  const mergedContacts = Array.from(mergedContactsMap.values()).slice(0, 6);
+
+  const mergedDealsMap = new Map<string, (typeof extraDeals)[number]>();
+  for (const d of [...(dealsRes.data ?? []), ...extraDeals]) {
+    if (!mergedDealsMap.has(d.id)) mergedDealsMap.set(d.id, d);
+  }
+  const mergedDeals = Array.from(mergedDealsMap.values()).slice(0, 6);
+
+  const companyNameMap = new Map<string, string>(
+    companies.map((c) => [c.id, c.name])
+  );
+  const missingCompanyIds = Array.from(
+    new Set(
+      [
+        ...mergedContacts.map((c) => c.company_id),
+        ...mergedDeals.map((d) => d.company_id),
+      ]
+        .filter((id): id is string => Boolean(id))
+        .filter((id) => !companyNameMap.has(id))
+    )
+  );
+  if (missingCompanyIds.length > 0) {
+    const { data: missingCompanies } = await supabase
+      .from("companies")
+      .select("id, name")
+      .in("id", missingCompanyIds);
+    for (const comp of missingCompanies ?? []) {
+      companyNameMap.set(comp.id, comp.name);
+    }
+  }
+
   return {
-    companies: companiesRes.data ?? [],
-    contacts: contactsRes.data ?? [],
-    deals: dealsRes.data ?? [],
+    companies,
+    contacts: mergedContacts.map((c) => ({
+      id: c.id,
+      first_name: c.first_name,
+      last_name: c.last_name,
+      email: c.email,
+      phone: c.phone,
+      job_title: c.job_title,
+      company_name: c.company_id ? (companyNameMap.get(c.company_id) ?? null) : null,
+    })),
+    deals: mergedDeals.map((d) => ({
+      id: d.id,
+      title: d.title,
+      amount: d.amount,
+      status: d.status,
+      company_name: d.company_id ? (companyNameMap.get(d.company_id) ?? null) : null,
+    })),
   };
 }
 

@@ -80,7 +80,7 @@ export function KanbanBoard({
   const [newPropOpen, setNewPropOpen] = useState(false);
 
   // Quick create deal modal
-  const [newDealOpen, setNewDealOpen] = useState(false);
+  const [newDealOpen, setNewDealOpen] = useState(searchParams.get("new") === "1");
   const [newTitle, setNewTitle] = useState("");
   const [newAmount, setNewAmount] = useState("0");
   const [newCompanyId, setNewCompanyId] = useState("");
@@ -103,6 +103,9 @@ export function KanbanBoard({
       setSelectedDealId(dealParam);
       const targetDeal = deals.find((d) => d.id === dealParam);
       if (targetDeal) setSelectedPipelineId(targetDeal.pipeline_id);
+    }
+    if (searchParams.get("new") === "1") {
+      setNewDealOpen(true);
     }
   }, [searchParams, deals]);
 
