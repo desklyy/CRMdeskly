@@ -13,7 +13,6 @@ import {
   updateQuoteStatusAction,
   type QuoteWithItems,
 } from "@/app/(crm)/actions/deals-and-quotes";
-import { sendDealEmailAction } from "@/app/(crm)/actions/outlook";
 import type { QuoteStatus } from "@/types/database";
 
 interface QuoteBuilderProps {
@@ -227,19 +226,26 @@ export function QuoteBuilder({
 
     setSendingQuoteId(q.id);
     try {
-      const res = await sendDealEmailAction({
-        dealId,
-        companyId,
-        contactId,
-        toEmail: targetEmail.trim(),
-        subject: `Presupuesto ${q.quote_number}`,
-        bodyText: `Hola,\n\nTe adjuntamos el presupuesto ${q.quote_number} por importe total de ${formatCurrencyEUR(q.total_amount)}.\n\nQuedamos a tu disposición para cualquier duda.`,
-        quoteId: q.id,
-        includeSignature,
+      const response = await fetch(`/api/quotes/${q.id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          toEmail: targetEmail.trim(),
+          includeSignature,
+          syncDealAmount,
+        }),
       });
 
-      if (res.error) {
-        setError(res.error);
+      const res = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        syncedBaseAmount?: number;
+      };
+
+      if (!response.ok || res.error) {
+        setError(
+          res.error ?? "No se pudo enviar el presupuesto por Outlook."
+        );
         return;
       }
 
@@ -254,6 +260,12 @@ export function QuoteBuilder({
         onDealAmountSynced?.(res.syncedBaseAmount);
       }
       setSendFeedback(`Presupuesto ${q.quote_number} enviado por Outlook a ${targetEmail}.`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Error de red al enviar el presupuesto."
+      );
     } finally {
       setSendingQuoteId(null);
     }

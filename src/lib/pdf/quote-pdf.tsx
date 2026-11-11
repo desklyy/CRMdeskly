@@ -179,8 +179,10 @@ const styles = StyleSheet.create({
   },
 });
 
-function formatMoney(value: number): string {
-  return `${value.toFixed(2).replace(".", ",")} EUR`;
+function formatMoney(value: number | string | null | undefined): string {
+  const num = Number(value ?? 0);
+  const safe = Number.isFinite(num) ? num : 0;
+  return `${safe.toFixed(2).replace(".", ",")} EUR`;
 }
 
 function getLogoDataUri(): string | null {

@@ -1,17 +1,18 @@
 "use server";
 
-import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { logUserActivity } from "@/lib/crm/activities";
-import { buildBillingSnapshot, type BillingSnapshot } from "@/lib/crm/quotes";
+import {
+  recordOutboundEmailAndActivity,
+  requireConnectedOutlook,
+  stripHtml,
+} from "@/lib/crm/outbound-mail";
 import {
   appendSignatureToHtmlBody,
   buildOperationalQuestionnaireEmail,
-  buildQuoteEmailHtml,
   sanitizeSignatureHtml,
 } from "@/lib/email/templates";
-import { renderQuotePdfBuffer } from "@/lib/pdf/quote-pdf";
 import {
   createOutlookEvent,
   deleteOutlookEvent,
@@ -21,7 +22,7 @@ import {
   updateOutlookEvent,
   type GraphEvent,
 } from "@/lib/microsoft/graph";
-import type { ActivityEntityType, Database, Json } from "@/types/database";
+import type { ActivityEntityType, Database } from "@/types/database";
 
 type CalendarLinkRow = Database["public"]["Tables"]["calendar_event_links"]["Row"];
 
@@ -34,102 +35,6 @@ async function requireUser() {
   return { supabase, user };
 }
 
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-async function requireConnectedOutlook(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string
-) {
-  const { data: conn } = await supabase
-    .from("oauth_connections")
-    .select("microsoft_email, is_auth_invalid")
-    .eq("user_id", userId)
-    .eq("provider", "microsoft")
-    .maybeSingle();
-
-  if (!conn) {
-    return { error: "Conecta tu cuenta de Outlook en Settings > Integraciones primero." } as const;
-  }
-  if (conn.is_auth_invalid) {
-    return { error: "Conexión con Outlook pausada. Vuelve a autenticarte." } as const;
-  }
-
-  return { microsoftEmail: conn.microsoft_email } as const;
-}
-
-async function recordOutboundEmailAndActivity(input: {
-  supabase: Awaited<ReturnType<typeof createClient>>;
-  userId: string;
-  microsoftEmail: string;
-  toEmail: string;
-  subject: string;
-  preview: string;
-  hasAttachments: boolean;
-  contactId: string;
-  companyId: string | null;
-  dealId: string | null;
-  quoteId?: string | null;
-  syncedBaseAmount?: number | null;
-  activityEntityType: ActivityEntityType;
-  activityEntityId: string;
-  eventType: string;
-  extraMetadata?: Record<string, Json>;
-}) {
-  const now = new Date().toISOString();
-  const syntheticGraphId = `crm-sent-${crypto.randomUUID()}`;
-
-  const { data: emailRow } = await input.supabase
-    .from("emails")
-    .insert({
-      ms_graph_id: syntheticGraphId,
-      user_id: input.userId,
-      contact_id: input.contactId,
-      deal_id: input.dealId,
-      quote_id: input.quoteId ?? null,
-      from_email: input.microsoftEmail,
-      to_emails: [input.toEmail] as Json,
-      subject: input.subject,
-      body_preview: input.preview.slice(0, 500),
-      direction: "outbound",
-      has_attachments: input.hasAttachments,
-      sent_at: now,
-    })
-    .select("*")
-    .single();
-
-  if (input.dealId) {
-    await input.supabase
-      .from("deals")
-      .update({
-        last_activity_at: now,
-        ...(input.syncedBaseAmount !== undefined && input.syncedBaseAmount !== null
-          ? { amount: input.syncedBaseAmount }
-          : {}),
-      })
-      .eq("id", input.dealId);
-  }
-
-  await logUserActivity({
-    supabase: input.supabase,
-    actorId: input.userId,
-    entityType: input.activityEntityType,
-    entityId: input.activityEntityId,
-    companyId: input.companyId,
-    contactId: input.contactId,
-    dealId: input.dealId,
-    eventType: input.eventType,
-    metadata: {
-      to_email: input.toEmail,
-      subject: input.subject,
-      ...(input.extraMetadata ?? {}),
-    },
-  });
-
-  return emailRow;
-}
-
 export async function sendDealEmailAction(input: {
   dealId: string;
   companyId: string | null;
@@ -137,7 +42,6 @@ export async function sendDealEmailAction(input: {
   toEmail: string;
   subject: string;
   bodyText: string;
-  quoteId?: string | null;
   includeSignature?: boolean;
 }) {
   const { supabase, user } = await requireUser();
@@ -155,17 +59,6 @@ export async function sendDealEmailAction(input: {
     return { error: outlook.error };
   }
 
-  const attachments: {
-    name: string;
-    contentType: string;
-    contentBytesBase64: string;
-  }[] = [];
-
-  let quoteNumberForLog: string | null = null;
-  let syncedBaseAmount: number | null = null;
-  let quoteEmailHtml: string | null = null;
-  let quoteTextPreview: string | null = null;
-
   let personalSignature: string | null = null;
   if (input.includeSignature !== false) {
     const { data: profileSig } = await supabase
@@ -176,94 +69,19 @@ export async function sendDealEmailAction(input: {
     personalSignature = profileSig?.email_signature ?? null;
   }
 
-  if (input.quoteId) {
-    const { data: quote } = await supabase
-      .from("quotes")
-      .select("*")
-      .eq("id", input.quoteId)
-      .single();
-
-    if (!quote) return { error: "Presupuesto no encontrado." };
-
-    const targetContactId = quote.contact_id ?? input.contactId;
-    const [itemsRes, dealRes, companyRes, contactRes] = await Promise.all([
-      supabase
-        .from("quote_items")
-        .select("*")
-        .eq("quote_id", quote.id)
-        .order("item_order", { ascending: true }),
-      supabase.from("deals").select("title").eq("id", quote.deal_id).single(),
-      quote.company_id
-        ? supabase.from("companies").select("*").eq("id", quote.company_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-      targetContactId
-        ? supabase.from("contacts").select("*").eq("id", targetContactId).maybeSingle()
-        : Promise.resolve({ data: null }),
-    ]);
-
-    const billing = (quote.billing_snapshot ??
-      buildBillingSnapshot(companyRes.data, contactRes.data)) as unknown as BillingSnapshot;
-
-    const dealTitle = dealRes.data?.title ?? "Presupuesto";
-    const pdfBuffer = await renderQuotePdfBuffer({
-      quote,
-      items: itemsRes.data ?? [],
-      dealTitle,
-      billing,
-    });
-
-    attachments.push({
-      name: `${quote.quote_number}.pdf`,
-      contentType: "application/pdf",
-      contentBytesBase64: pdfBuffer.toString("base64"),
-    });
-
-    const now = new Date().toISOString();
-    await supabase
-      .from("quotes")
-      .update({
-        status: "sent",
-        billing_snapshot: billing as unknown as Record<string, Json>,
-        sent_at: quote.sent_at ?? now,
-      })
-      .eq("id", quote.id);
-
-    const builtQuoteEmail = buildQuoteEmailHtml({
-      firstName: contactRes.data?.first_name ?? null,
-      quoteNumber: quote.quote_number,
-      dealTitle,
-      companyName: companyRes.data?.name ?? billing.company_name ?? null,
-      items: itemsRes.data ?? [],
-      subtotal: Number(quote.subtotal ?? 0),
-      discountTotal: Number(quote.discount_total ?? 0),
-      taxTotal: Number(quote.tax_total ?? 0),
-      totalAmount: Number(quote.total_amount ?? 0),
-      validUntil: quote.valid_until,
-      terms: quote.terms,
-      personalSignatureHtml: personalSignature,
-    });
-    quoteEmailHtml = builtQuoteEmail.htmlBody;
-    quoteTextPreview = builtQuoteEmail.textPreview;
-
-    quoteNumberForLog = quote.quote_number;
-    syncedBaseAmount =
-      Math.round((quote.subtotal - quote.discount_total) * 100) / 100;
-  }
-
   const rawHtmlBody = input.bodyText
     .split("\n")
     .map((line) => `<p>${line.replace(/</g, "&lt;").replace(/>/g, "&gt;") || "&nbsp;"}</p>`)
     .join("");
 
-  const htmlBody =
-    quoteEmailHtml ?? appendSignatureToHtmlBody(rawHtmlBody, personalSignature);
+  const htmlBody = appendSignatureToHtmlBody(rawHtmlBody, personalSignature);
 
   try {
     await sendOutlookMail(user.id, {
       to: [toEmail],
       subject: input.subject.trim(),
       htmlBody,
-      attachments,
+      attachments: [],
     });
   } catch (err) {
     if (err instanceof OutlookAuthInvalidError) {
@@ -280,21 +98,18 @@ export async function sendDealEmailAction(input: {
     microsoftEmail: outlook.microsoftEmail,
     toEmail,
     subject: input.subject.trim(),
-    preview: quoteTextPreview ?? stripHtml(rawHtmlBody),
-    hasAttachments: attachments.length > 0,
+    preview: stripHtml(rawHtmlBody),
+    hasAttachments: false,
     contactId: input.contactId,
     companyId: input.companyId,
     dealId: input.dealId,
-    quoteId: input.quoteId ?? null,
-    syncedBaseAmount,
-    activityEntityType: quoteNumberForLog ? "quote" : "deal",
-    activityEntityId: input.quoteId ?? input.dealId,
-    eventType: quoteNumberForLog ? "quote_sent" : "email_sent",
-    extraMetadata: quoteNumberForLog ? { quote_number: quoteNumberForLog } : undefined,
+    activityEntityType: "deal",
+    activityEntityId: input.dealId,
+    eventType: "email_sent",
   });
 
   revalidatePath("/pipelines");
-  return { data: emailRow, syncedBaseAmount };
+  return { data: emailRow };
 }
 
 export async function sendQuestionnaireEmailAction(input: {
