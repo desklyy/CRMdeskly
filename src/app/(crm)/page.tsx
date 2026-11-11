@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import {
   DashboardView,
+  type EvolutionDealPoint,
   type FunnelPoint,
-  type MonthlyPoint,
   type NextActionItem,
 } from "@/components/crm/dashboard-view";
 
@@ -69,23 +69,12 @@ export default async function DashboardPage() {
         valuedDeals.length
       : 0;
 
-  // Últimos 6 meses
-  const monthlySeries: MonthlyPoint[] = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const label = d.toLocaleDateString("es-ES", { month: "short", year: "2-digit" });
-
-    const createdValue = deals
-      .filter((deal) => deal.created_at.startsWith(key))
-      .reduce((sum, deal) => sum + Number(deal.amount || 0), 0);
-
-    const wonValue = wonDeals
-      .filter((deal) => (deal.closed_at ?? deal.created_at).startsWith(key))
-      .reduce((sum, deal) => sum + Number(deal.amount || 0), 0);
-
-    monthlySeries.push({ month: label, pipeline: createdValue, won: wonValue });
-  }
+  const evolutionDeals: EvolutionDealPoint[] = deals.map((d) => ({
+    amount: Number(d.amount || 0),
+    status: d.status,
+    created_at: d.created_at,
+    closed_at: d.closed_at,
+  }));
 
   const defaultPipeline =
     (pipelinesRes.data ?? []).find((p) => p.is_default) ??
@@ -138,7 +127,7 @@ export default async function DashboardPage() {
         winRatePct,
         averageTicket,
       }}
-      monthlySeries={monthlySeries}
+      evolutionDeals={evolutionDeals}
       funnelSeries={funnelSeries}
       nextActions={nextActions}
       initialActivities={activitiesRes.data ?? []}

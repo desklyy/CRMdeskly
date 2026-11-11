@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Bar,
@@ -17,6 +17,8 @@ import {
   Activity,
   ArrowUpRight,
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
   TrendingUp,
   Users,
   Wallet,
@@ -37,8 +39,15 @@ export interface DashboardKPIs {
   averageTicket: number;
 }
 
-export interface MonthlyPoint {
-  month: string;
+export interface EvolutionDealPoint {
+  amount: number;
+  status: "open" | "won" | "lost";
+  created_at: string;
+  closed_at: string | null;
+}
+
+export interface EvolutionChartBucket {
+  label: string;
   pipeline: number;
   won: number;
 }
@@ -60,11 +69,115 @@ export interface NextActionItem {
 
 interface DashboardViewProps {
   kpis: DashboardKPIs;
-  monthlySeries: MonthlyPoint[];
+  evolutionDeals: EvolutionDealPoint[];
   funnelSeries: FunnelPoint[];
   nextActions: NextActionItem[];
   initialActivities: ActivityRow[];
   profileNames: Record<string, string>;
+}
+
+function buildEvolutionSeries(
+  deals: EvolutionDealPoint[],
+  mode: "monthly" | "daily",
+  monthOffset: number
+): {
+  points: EvolutionChartBucket[];
+  rangeLabel: string;
+  totalPipeline: number;
+  totalWon: number;
+} {
+  const now = new Date();
+  const anchor = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+
+  if (mode === "monthly") {
+    const points: EvolutionChartBucket[] = [];
+    let totalPipeline = 0;
+    let totalWon = 0;
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleDateString("es-ES", {
+        month: "short",
+        year: "2-digit",
+      });
+
+      const createdValue = deals
+        .filter((deal) => deal.created_at.startsWith(key))
+        .reduce((sum, deal) => sum + Number(deal.amount || 0), 0);
+
+      const wonValue = deals
+        .filter(
+          (deal) =>
+            deal.status === "won" &&
+            (deal.closed_at ?? deal.created_at).startsWith(key)
+        )
+        .reduce((sum, deal) => sum + Number(deal.amount || 0), 0);
+
+      totalPipeline += createdValue;
+      totalWon += wonValue;
+      points.push({ label, pipeline: createdValue, won: wonValue });
+    }
+
+    const first = points[0]?.label ?? "";
+    const last = points[points.length - 1]?.label ?? "";
+    return {
+      points,
+      rangeLabel: `${first} — ${last} (€)`,
+      totalPipeline,
+      totalWon,
+    };
+  }
+
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+  const createdByDay = new Map<string, number>();
+  const wonByDay = new Map<string, number>();
+
+  for (const deal of deals) {
+    const createdDay = deal.created_at.slice(0, 10);
+    if (createdDay.startsWith(monthPrefix)) {
+      createdByDay.set(
+        createdDay,
+        (createdByDay.get(createdDay) ?? 0) + Number(deal.amount || 0)
+      );
+    }
+    if (deal.status === "won") {
+      const wonDay = (deal.closed_at ?? deal.created_at).slice(0, 10);
+      if (wonDay.startsWith(monthPrefix)) {
+        wonByDay.set(wonDay, (wonByDay.get(wonDay) ?? 0) + Number(deal.amount || 0));
+      }
+    }
+  }
+
+  const points: EvolutionChartBucket[] = [];
+  let totalPipeline = 0;
+  let totalWon = 0;
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dayStr = String(day).padStart(2, "0");
+    const dayKey = `${monthPrefix}-${dayStr}`;
+    const pipeline = createdByDay.get(dayKey) ?? 0;
+    const won = wonByDay.get(dayKey) ?? 0;
+    totalPipeline += pipeline;
+    totalWon += won;
+    points.push({ label: dayStr, pipeline, won });
+  }
+
+  const monthTitle = anchor.toLocaleDateString("es-ES", {
+    month: "long",
+    year: "numeric",
+  });
+
+  return {
+    points,
+    rangeLabel: `${monthTitle} · día a día (€)`,
+    totalPipeline,
+    totalWon,
+  };
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -101,7 +214,7 @@ const ACTOR_BADGE: Record<
 
 export function DashboardView({
   kpis,
-  monthlySeries,
+  evolutionDeals,
   funnelSeries,
   nextActions,
   initialActivities,
@@ -110,6 +223,13 @@ export function DashboardView({
   const todayIso = new Date().toISOString().slice(0, 10);
   const { subscribe } = useRealtime();
   const [activities, setActivities] = useState<ActivityRow[]>(initialActivities);
+  const [chartMode, setChartMode] = useState<"monthly" | "daily">("monthly");
+  const [monthOffset, setMonthOffset] = useState(0);
+
+  const evolution = useMemo(
+    () => buildEvolutionSeries(evolutionDeals, chartMode, monthOffset),
+    [evolutionDeals, chartMode, monthOffset]
+  );
 
   useEffect(() => {
     return subscribe("activities", (payload) => {
@@ -272,28 +392,107 @@ export function DashboardView({
       {/* Charts + Live Timeline */}
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="space-y-6">
-          {/* Monthly Evolution */}
+          {/* Evolution Chart (Monthly or Daily + Left/Right Navigation) */}
           <div className="rounded-[4px] border border-[#E2E8F0] bg-white p-[30px]">
-            <div className="mb-5">
-              <h2 className="text-sm font-bold tracking-[-0.02em] text-[#0F172A]">
-                Evolución mensual (Pipeline creado vs Ganado)
-              </h2>
-              <p className="text-xs text-[#64748B]">Últimos 6 meses (€)</p>
+            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold tracking-[-0.02em] text-[#0F172A]">
+                  Evolución {chartMode === "monthly" ? "mensual" : "diaria"} (Pipeline creado vs Ganado)
+                </h2>
+                <p className="mt-0.5 text-xs capitalize text-[#64748B]">
+                  {evolution.rangeLabel} · Pipeline:{" "}
+                  <span className="font-semibold text-[#0F172A]">
+                    {formatCurrencyEUR(evolution.totalPipeline)}
+                  </span>{" "}
+                  · Ganado:{" "}
+                  <span className="font-semibold text-[#1658F5]">
+                    {formatCurrencyEUR(evolution.totalWon)}
+                  </span>
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-[4px] border border-[#E2E8F0] bg-[#F8FAFC] p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setChartMode("monthly")}
+                    className={`rounded-[3px] px-2.5 py-1 text-xs font-semibold transition-colors ${
+                      chartMode === "monthly"
+                        ? "bg-[#1658F5] text-white"
+                        : "text-[#64748B] hover:text-[#0F172A]"
+                    }`}
+                  >
+                    Mensual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChartMode("daily")}
+                    className={`rounded-[3px] px-2.5 py-1 text-xs font-semibold transition-colors ${
+                      chartMode === "daily"
+                        ? "bg-[#1658F5] text-white"
+                        : "text-[#64748B] hover:text-[#0F172A]"
+                    }`}
+                  >
+                    Diaria
+                  </button>
+                </div>
+
+                <div className="inline-flex items-center rounded-[4px] border border-[#E2E8F0] bg-white">
+                  <button
+                    type="button"
+                    onClick={() => setMonthOffset((m) => m - 1)}
+                    title={
+                      chartMode === "monthly"
+                        ? "Retroceder 1 mes"
+                        : "Mes anterior"
+                    }
+                    className="flex h-7 w-7 items-center justify-center text-[#334155] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  {monthOffset < 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setMonthOffset(0)}
+                      className="border-x border-[#E2E8F0] px-2 text-[11px] font-semibold text-[#1658F5] hover:bg-[#F8FAFC]"
+                    >
+                      Hoy
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={monthOffset >= 0}
+                    onClick={() => setMonthOffset((m) => Math.min(0, m + 1))}
+                    title={
+                      chartMode === "monthly" ? "Avanzar 1 mes" : "Mes siguiente"
+                    }
+                    className="flex h-7 w-7 items-center justify-center text-[#334155] hover:bg-[#F8FAFC] hover:text-[#0F172A] disabled:cursor-not-allowed disabled:opacity-35"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={monthlySeries}>
+                <LineChart data={evolution.points}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#64748B" }} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: "#64748B" }}
+                    interval={chartMode === "daily" ? 2 : 0}
+                  />
                   <YAxis tick={{ fontSize: 11, fill: "#64748B" }} />
-                  <Tooltip />
+                  <Tooltip
+                    formatter={(value) => formatCurrencyEUR(Number(value ?? 0))}
+                  />
                   <Line
                     type="monotone"
                     dataKey="pipeline"
                     name="Pipeline (€)"
                     stroke="#0F172A"
                     strokeWidth={2}
-                    dot={{ r: 3 }}
+                    dot={{ r: chartMode === "daily" ? 2 : 3 }}
                   />
                   <Line
                     type="monotone"
@@ -301,7 +500,7 @@ export function DashboardView({
                     name="Ganado (€)"
                     stroke="#1658F5"
                     strokeWidth={2}
-                    dot={{ r: 3 }}
+                    dot={{ r: chartMode === "daily" ? 2 : 3 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
