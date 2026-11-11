@@ -7,6 +7,9 @@ import { buildBillingSnapshot, calculateQuoteTotals, type QuoteItemInput } from 
 import type { Database, Json, QuoteStatus } from "@/types/database";
 
 type DealUpdate = Database["public"]["Tables"]["deals"]["Update"];
+type CompanyRow = Database["public"]["Tables"]["companies"]["Row"];
+type CustomFieldDefinitionRow =
+  Database["public"]["Tables"]["custom_field_definitions"]["Row"];
 type QuoteRow = Database["public"]["Tables"]["quotes"]["Row"];
 type QuoteItemRow = Database["public"]["Tables"]["quote_items"]["Row"];
 type ActivityRow = Database["public"]["Tables"]["activities"]["Row"];
@@ -281,38 +284,67 @@ export async function getDealDetailsAction(dealId: string): Promise<{
   emails: EmailRow[];
   calendarLinks: CalendarLinkRow[];
   activities: ActivityRow[];
+  linkedCompany: Pick<
+    CompanyRow,
+    "id" | "name" | "domain" | "industry" | "company_size" | "custom_fields"
+  > | null;
+  companyDefinitions: CustomFieldDefinitionRow[];
 }> {
   const { supabase } = await requireUser();
 
-  const [dcRes, quotesRes, emailsRes, calRes, actRes] = await Promise.all([
-    supabase
-      .from("deal_contacts")
-      .select("contact_id, role_in_deal")
-      .eq("deal_id", dealId),
-    supabase
-      .from("quotes")
-      .select("*")
-      .eq("deal_id", dealId)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("emails")
-      .select("*")
-      .eq("deal_id", dealId)
-      .order("sent_at", { ascending: false })
-      .limit(20),
-    supabase
-      .from("calendar_event_links")
-      .select("*")
-      .eq("deal_id", dealId)
-      .order("created_at", { ascending: false })
-      .limit(20),
-    supabase
-      .from("activities")
-      .select("*")
-      .eq("deal_id", dealId)
-      .order("created_at", { ascending: false })
-      .limit(30),
-  ]);
+  const [dealRowRes, dcRes, quotesRes, emailsRes, calRes, actRes, companyDefsRes] =
+    await Promise.all([
+      supabase.from("deals").select("company_id").eq("id", dealId).maybeSingle(),
+      supabase
+        .from("deal_contacts")
+        .select("contact_id, role_in_deal")
+        .eq("deal_id", dealId),
+      supabase
+        .from("quotes")
+        .select("*")
+        .eq("deal_id", dealId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("emails")
+        .select("*")
+        .eq("deal_id", dealId)
+        .order("sent_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("calendar_event_links")
+        .select("*")
+        .eq("deal_id", dealId)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("activities")
+        .select("*")
+        .eq("deal_id", dealId)
+        .order("created_at", { ascending: false })
+        .limit(30),
+      supabase
+        .from("custom_field_definitions")
+        .select("*")
+        .eq("entity_type", "company")
+        .eq("is_active", true)
+        .order("field_order", { ascending: true }),
+    ]);
+
+  let linkedCompany: Pick<
+    CompanyRow,
+    "id" | "name" | "domain" | "industry" | "company_size" | "custom_fields"
+  > | null = null;
+  const companyId = dealRowRes.data?.company_id;
+  if (companyId) {
+    const { data: compData } = await supabase
+      .from("companies")
+      .select("id, name, domain, industry, company_size, custom_fields")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (compData) {
+      linkedCompany = compData;
+    }
+  }
 
   const dcRows = dcRes.data ?? [];
   const contactIds = dcRows.map((r) => r.contact_id);
@@ -371,6 +403,8 @@ export async function getDealDetailsAction(dealId: string): Promise<{
     emails: emailsRes.data ?? [],
     calendarLinks: calRes.data ?? [],
     activities: actRes.data ?? [],
+    linkedCompany,
+    companyDefinitions: companyDefsRes.data ?? [],
   };
 }
 

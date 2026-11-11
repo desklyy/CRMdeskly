@@ -21,6 +21,7 @@ interface CustomFieldsPanelProps {
   onUpdateField: (key: string, value: Json) => Promise<void>;
   onDefinitionCreated?: (def: CustomFieldDefinition) => void;
   onDefinitionUpdated?: (def: CustomFieldDefinition) => void;
+  excludeSections?: string[];
 }
 
 export function CustomFieldsPanel({
@@ -30,6 +31,7 @@ export function CustomFieldsPanel({
   onUpdateField,
   onDefinitionCreated,
   onDefinitionUpdated,
+  excludeSections,
 }: CustomFieldsPanelProps) {
   const [newPropOpen, setNewPropOpen] = useState(false);
   const [addingOptionFor, setAddingOptionFor] = useState<string | null>(null);
@@ -37,10 +39,15 @@ export function CustomFieldsPanel({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draftText, setDraftText] = useState("");
 
-  const grouped = useMemo(() => groupFieldsBySection(definitions), [definitions]);
+  const allGrouped = useMemo(() => groupFieldsBySection(definitions), [definitions]);
+  const grouped = useMemo(() => {
+    if (!excludeSections || excludeSections.length === 0) return allGrouped;
+    const excluded = new Set(excludeSections);
+    return allGrouped.filter((g) => !excluded.has(g.section));
+  }, [allGrouped, excludeSections]);
   const existingSections = useMemo(
-    () => grouped.map((g) => g.section),
-    [grouped]
+    () => allGrouped.map((g) => g.section),
+    [allGrouped]
   );
 
   async function handleAddOption(field: CustomFieldDefinition) {

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
+import { OperationalProjectPanel } from "@/components/crm/operational-project-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
 import { QuoteBuilder } from "@/components/crm/quote-builder";
 import {
@@ -18,6 +19,7 @@ import {
 } from "@/components/crm/questionnaire-sender";
 import { formatCurrencyEUR, type CustomFieldDefinition } from "@/lib/crm/custom-fields";
 import { LOST_REASONS, type DealRow, type StageRow } from "@/lib/crm/deals";
+import { updateCompanyCustomFieldAction } from "@/app/(crm)/actions/crm-entities";
 import {
   addDealContactAction,
   deleteDealAction,
@@ -51,7 +53,12 @@ type ActivityRow = Database["public"]["Tables"]["activities"]["Row"];
 type EmailRow = Database["public"]["Tables"]["emails"]["Row"];
 type CalendarLinkRow = Database["public"]["Tables"]["calendar_event_links"]["Row"];
 
-type TabKey = "details" | "emails" | "meetings" | "quotes" | "timeline";
+type TabKey = "details" | "project" | "emails" | "meetings" | "quotes" | "timeline";
+
+type LinkedCompanyDetails = Pick<
+  Database["public"]["Tables"]["companies"]["Row"],
+  "id" | "name" | "domain" | "industry" | "company_size" | "custom_fields"
+>;
 
 interface DealSlideOverProps {
   deal: DealRow | null;
@@ -95,6 +102,8 @@ export function DealSlideOver({
   const [emails, setEmails] = useState<EmailRow[]>([]);
   const [calendarLinks, setCalendarLinks] = useState<CalendarLinkRow[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
+  const [linkedCompany, setLinkedCompany] = useState<LinkedCompanyDetails | null>(null);
+  const [companyDefinitions, setCompanyDefinitions] = useState<CustomFieldDefinition[]>([]);
   const [newContactId, setNewContactId] = useState("");
   const [newContactRole, setNewContactRole] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -178,14 +187,21 @@ export function DealSlideOver({
     },
   });
 
+  const dealId = deal?.id ?? null;
+  const dealCompanyId = deal?.company_id ?? null;
+
   useEffect(() => {
-    if (!deal) return;
+    if (!dealId) return;
     setTab("details");
     setExpandedEmailId(null);
     setExpandedBody(null);
     setEmailFeedback(null);
     setMeetingFeedback(null);
     setIncludeEmailSignature(true);
+  }, [dealId]);
+
+  useEffect(() => {
+    if (!deal) return;
     const primary = contacts.find((c) => c.id === deal.primary_contact_id);
     setEmailTo(primary?.email ?? "");
     setEmailSubject(`Sobre ${deal.title}`);
@@ -198,6 +214,8 @@ export function DealSlideOver({
       setEmails(res.emails);
       setCalendarLinks(res.calendarLinks);
       setActivities(res.activities);
+      setLinkedCompany(res.linkedCompany);
+      setCompanyDefinitions(res.companyDefinitions);
     });
     void getMyEmailSignatureAction().then((sig) => {
       if (active) setMySignature(sig);
@@ -205,7 +223,9 @@ export function DealSlideOver({
     return () => {
       active = false;
     };
-  }, [deal, contacts]);
+    // Recargar detalles solo al cambiar de negocio o de empresa vinculada
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealId, dealCompanyId]);
 
   if (!deal) return null;
 
@@ -224,6 +244,21 @@ export function DealSlideOver({
     if (!deal) return;
     const res = await updateDealCustomFieldAction(deal.id, key, value);
     if (res.data) onDealUpdated(res.data);
+  }
+
+  async function saveLinkedCompanyCustom(key: string, value: Json) {
+    if (!linkedCompany) return;
+    const res = await updateCompanyCustomFieldAction(linkedCompany.id, key, value);
+    if (res.data) {
+      setLinkedCompany({
+        id: res.data.id,
+        name: res.data.name,
+        domain: res.data.domain,
+        industry: res.data.industry,
+        company_size: res.data.company_size,
+        custom_fields: res.data.custom_fields,
+      });
+    }
   }
 
   async function handleStageChange(nextStageId: string) {
@@ -310,7 +345,8 @@ export function DealSlideOver({
   const ownerOptions = profiles.map((p) => ({ value: p.id, label: p.full_name }));
 
   const TABS: { key: TabKey; label: string }[] = [
-    { key: "details", label: "Variables y Detalle" },
+    { key: "details", label: "Detalle" },
+    { key: "project", label: "Proyecto" },
     { key: "emails", label: `Emails (${emails.length})` },
     { key: "meetings", label: `Reuniones (${calendarLinks.length})` },
     { key: "quotes", label: `Presupuestos (${quotes.length})` },
@@ -529,7 +565,7 @@ export function DealSlideOver({
             </div>
           </div>
 
-          {/* Custom fields */}
+          {/* Otras variables personalizadas */}
           <CustomFieldsPanel
             entityType="deal"
             definitions={definitions}
@@ -537,8 +573,23 @@ export function DealSlideOver({
             onUpdateField={saveCustom}
             onDefinitionCreated={onDefinitionCreated}
             onDefinitionUpdated={onDefinitionUpdated}
+            excludeSections={["Cuestionario Operativo"]}
           />
         </div>
+      )}
+
+      {tab === "project" && (
+        <OperationalProjectPanel
+          companyName={linkedCompany?.name ?? null}
+          companyValues={linkedCompany?.custom_fields ?? null}
+          companyDefinitions={companyDefinitions}
+          onUpdateCompanyField={
+            linkedCompany ? saveLinkedCompanyCustom : undefined
+          }
+          dealValues={deal.custom_fields}
+          dealDefinitions={definitions}
+          onUpdateDealField={saveCustom}
+        />
       )}
 
       {tab === "quotes" && (

@@ -315,12 +315,24 @@ export async function deleteCompanyAction(companyId: string) {
   return { ok: true };
 }
 
+export interface CompanyDealRelation {
+  id: string;
+  title: string;
+  amount: number;
+  status: "open" | "won" | "lost";
+  stage_name: string | null;
+  stage_color: string | null;
+  lead_source: string | null;
+  custom_fields: Record<string, Json>;
+}
+
 export async function getCompanyRelationsAction(companyId: string): Promise<{
   contacts: Pick<ContactRow, "id" | "first_name" | "last_name" | "email" | "job_title">[];
   activities: ActivityRow[];
+  deals: CompanyDealRelation[];
 }> {
   const { supabase } = await requireAuthenticatedUser();
-  const [contactsRes, activitiesRes] = await Promise.all([
+  const [contactsRes, activitiesRes, dealsRes, stagesRes] = await Promise.all([
     supabase
       .from("contacts")
       .select("id, first_name, last_name, email, job_title")
@@ -333,11 +345,37 @@ export async function getCompanyRelationsAction(companyId: string): Promise<{
       .eq("company_id", companyId)
       .order("created_at", { ascending: false })
       .limit(15),
+    supabase
+      .from("deals")
+      .select("id, title, amount, status, stage_id, lead_source, custom_fields")
+      .eq("company_id", companyId)
+      .order("updated_at", { ascending: false })
+      .limit(25),
+    supabase.from("pipeline_stages").select("id, name, color_code"),
   ]);
+
+  const stageMap = new Map(
+    (stagesRes.data ?? []).map((s) => [s.id, { name: s.name, color: s.color_code }])
+  );
+
+  const deals: CompanyDealRelation[] = (dealsRes.data ?? []).map((d) => {
+    const st = stageMap.get(d.stage_id);
+    return {
+      id: d.id,
+      title: d.title,
+      amount: Number(d.amount ?? 0),
+      status: d.status,
+      stage_name: st?.name ?? null,
+      stage_color: st?.color ?? null,
+      lead_source: d.lead_source,
+      custom_fields: (d.custom_fields ?? {}) as Record<string, Json>,
+    };
+  });
 
   return {
     contacts: contactsRes.data ?? [],
     activities: activitiesRes.data ?? [],
+    deals,
   };
 }
 

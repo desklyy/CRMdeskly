@@ -2,11 +2,16 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Trash2, Users } from "lucide-react";
+import { Briefcase, Trash2, Users } from "lucide-react";
 import { SlideOver } from "@/components/ui/slide-over";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { InlineField } from "@/components/crm/inline-field";
 import { CustomFieldsPanel } from "@/components/crm/custom-fields-panel";
+import {
+  OperationalProjectPanel,
+  type CompanyDealSummary,
+} from "@/components/crm/operational-project-panel";
 import { ActivityMiniList } from "@/components/crm/activity-mini-list";
 import {
   QuestionnaireFeedbackArea,
@@ -19,7 +24,7 @@ import {
   updateCompanyCustomFieldAction,
   updateCompanyFieldAction,
 } from "@/app/(crm)/actions/crm-entities";
-import type { CustomFieldDefinition } from "@/lib/crm/custom-fields";
+import { formatCurrencyEUR, type CustomFieldDefinition } from "@/lib/crm/custom-fields";
 import type { Database, Json, UserRole } from "@/types/database";
 
 type CompanyRow = Database["public"]["Tables"]["companies"]["Row"];
@@ -52,6 +57,8 @@ const COMPANY_SIZES = [
   { value: "200+", label: "200+ empleados" },
 ];
 
+type CompanyTabKey = "resumen" | "proyecto" | "relaciones" | "actividad";
+
 export function CompanySlideOver({
   company,
   onClose,
@@ -63,19 +70,24 @@ export function CompanySlideOver({
   onDefinitionCreated,
   onDefinitionUpdated,
 }: CompanySlideOverProps) {
+  const [tab, setTab] = useState<CompanyTabKey>("resumen");
   const [contacts, setContacts] = useState<ContactSlim[]>([]);
+  const [deals, setDeals] = useState<CompanyDealSummary[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [deleting, setDeleting] = useState(false);
 
+  const companyId = company?.id ?? null;
+
   const questionnaire = useSendQuestionnaire({
     entityType: "company",
-    entityId: company?.id ?? "",
+    entityId: companyId ?? "",
     recipients: contacts,
-    companyId: company?.id ?? null,
+    companyId,
     onSent: () => {
-      if (company) {
-        void getCompanyRelationsAction(company.id).then((res) => {
+      if (companyId) {
+        void getCompanyRelationsAction(companyId).then((res) => {
           setContacts(res.contacts);
+          setDeals(res.deals);
           setActivities(res.activities);
         });
       }
@@ -83,17 +95,19 @@ export function CompanySlideOver({
   });
 
   useEffect(() => {
-    if (!company) return;
+    if (!companyId) return;
+    setTab("resumen");
     let active = true;
-    void getCompanyRelationsAction(company.id).then((res) => {
+    void getCompanyRelationsAction(companyId).then((res) => {
       if (!active) return;
       setContacts(res.contacts);
+      setDeals(res.deals);
       setActivities(res.activities);
     });
     return () => {
       active = false;
     };
-  }, [company]);
+  }, [companyId]);
 
   if (!company) return null;
 
@@ -133,6 +147,13 @@ export function CompanySlideOver({
     label: p.full_name,
   }));
 
+  const COMPANY_TABS: { key: CompanyTabKey; label: string }[] = [
+    { key: "resumen", label: "Ficha" },
+    { key: "proyecto", label: "Proyecto y Cuestionario" },
+    { key: "relaciones", label: `Negocios y Contactos (${deals.length + contacts.length})` },
+    { key: "actividad", label: `Actividad (${activities.length})` },
+  ];
+
   return (
     <SlideOver
       open={Boolean(company)}
@@ -162,146 +183,234 @@ export function CompanySlideOver({
       }
     >
       <QuestionnaireFeedbackArea state={questionnaire} />
-      <div className="space-y-6">
-        {/* Identidad y Web */}
-        <div className="space-y-1.5">
-          <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-            Identidad y Web
-          </h3>
-          <div className="rounded-md border border-slate-200 bg-white p-1.5">
-            <InlineField
-              label="Nombre"
-              value={company.name}
-              onSave={async (val) => {
-                if (val) await saveCore({ name: val });
-              }}
-            />
-            <InlineField
-              label="Dominio"
-              value={company.domain}
-              placeholder="empresa.es"
-              onSave={(val) => saveCore({ domain: val?.toLowerCase() ?? null })}
-            />
-            <InlineField
-              label="Web"
-              type="url"
-              value={company.website}
-              placeholder="https://..."
-              onSave={(val) => saveCore({ website: val })}
-            />
-            <InlineField
-              label="LinkedIn"
-              type="url"
-              value={company.linkedin_url}
-              placeholder="https://linkedin.com/company/..."
-              onSave={(val) => saveCore({ linkedin_url: val })}
-            />
-            <InlineField
-              label="Sector"
-              value={company.industry}
-              onSave={(val) => saveCore({ industry: val })}
-            />
-            <InlineField
-              label="Tamaño"
-              type="select"
-              value={company.company_size}
-              options={COMPANY_SIZES}
-              onSave={(val) => saveCore({ company_size: val })}
-            />
-            <InlineField
-              label="Propietario"
-              type="select"
-              value={company.owner_id}
-              options={ownerOptions}
-              onSave={(val) => saveCore({ owner_id: val })}
-            />
-          </div>
-        </div>
-
-        {/* Datos Fiscales */}
-        <div className="space-y-1.5">
-          <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-            Datos fiscales (Presupuestos)
-          </h3>
-          <div className="rounded-md border border-slate-200 bg-white p-1.5">
-            <InlineField
-              label="CIF / NIF"
-              value={company.tax_id}
-              onSave={(val) => saveCore({ tax_id: val })}
-            />
-            <InlineField
-              label="Dirección fiscal"
-              value={company.billing_address}
-              onSave={(val) => saveCore({ billing_address: val })}
-            />
-            <InlineField
-              label="Ciudad"
-              value={company.billing_city}
-              onSave={(val) => saveCore({ billing_city: val })}
-            />
-            <InlineField
-              label="Código postal"
-              value={company.billing_postal_code}
-              onSave={(val) => saveCore({ billing_postal_code: val })}
-            />
-            <InlineField
-              label="País"
-              value={company.country}
-              onSave={(val) => saveCore({ country: val })}
-            />
-          </div>
-        </div>
-
-        {/* Variables personalizadas */}
-        <CustomFieldsPanel
-          entityType="company"
-          definitions={definitions}
-          values={company.custom_fields}
-          onUpdateField={saveCustom}
-          onDefinitionCreated={onDefinitionCreated}
-          onDefinitionUpdated={onDefinitionUpdated}
-        />
-
-        {/* Contactos vinculados */}
-        <div className="space-y-2 border-t border-slate-200 pt-4">
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <Users className="h-3.5 w-3.5" />
-              Contactos ({contacts.length})
-            </h3>
-            <Link
-              href={`/contacts?companyId=${company.id}`}
-              className="text-xs font-medium text-slate-600 hover:text-slate-950"
-            >
-              Ver todos →
-            </Link>
-          </div>
-          {contacts.length === 0 ? (
-            <p className="text-xs text-slate-400">Sin contactos asociados.</p>
-          ) : (
-            <div className="divide-y divide-slate-100 rounded-md border border-slate-200 bg-white">
-              {contacts.map((c) => (
-                <Link
-                  key={c.id}
-                  href={`/contacts?id=${c.id}`}
-                  className="flex items-center justify-between px-3 py-2 text-xs hover:bg-slate-50"
-                >
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      {[c.first_name, c.last_name].filter(Boolean).join(" ")}
-                    </p>
-                    <p className="text-slate-500">{c.job_title ?? c.email ?? "—"}</p>
-                  </div>
-                  <span className="text-slate-400">{c.email ?? ""}</span>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Timeline */}
-        <ActivityMiniList activities={activities} />
+      <div className="mb-5 flex flex-wrap gap-1 border-b border-[#E2E8F0] pb-2">
+        {COMPANY_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`rounded-[4px] px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+              tab === t.key
+                ? "bg-[#1658F5] text-white"
+                : "text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
+
+      {tab === "resumen" && (
+        <div className="space-y-6">
+          {/* Identidad y Web */}
+          <div className="space-y-1.5">
+            <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Identidad y Web
+            </h3>
+            <div className="rounded-md border border-slate-200 bg-white p-1.5">
+              <InlineField
+                label="Nombre"
+                value={company.name}
+                onSave={async (val) => {
+                  if (val) await saveCore({ name: val });
+                }}
+              />
+              <InlineField
+                label="Dominio"
+                value={company.domain}
+                placeholder="empresa.es"
+                onSave={(val) => saveCore({ domain: val?.toLowerCase() ?? null })}
+              />
+              <InlineField
+                label="Web"
+                type="url"
+                value={company.website}
+                placeholder="https://..."
+                onSave={(val) => saveCore({ website: val })}
+              />
+              <InlineField
+                label="LinkedIn"
+                type="url"
+                value={company.linkedin_url}
+                placeholder="https://linkedin.com/company/..."
+                onSave={(val) => saveCore({ linkedin_url: val })}
+              />
+              <InlineField
+                label="Sector"
+                value={company.industry}
+                onSave={(val) => saveCore({ industry: val })}
+              />
+              <InlineField
+                label="Tamaño"
+                type="select"
+                value={company.company_size}
+                options={COMPANY_SIZES}
+                onSave={(val) => saveCore({ company_size: val })}
+              />
+              <InlineField
+                label="Propietario"
+                type="select"
+                value={company.owner_id}
+                options={ownerOptions}
+                onSave={(val) => saveCore({ owner_id: val })}
+              />
+            </div>
+          </div>
+
+          {/* Datos Fiscales */}
+          <div className="space-y-1.5">
+            <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Datos fiscales (Presupuestos)
+            </h3>
+            <div className="rounded-md border border-slate-200 bg-white p-1.5">
+              <InlineField
+                label="CIF / NIF"
+                value={company.tax_id}
+                onSave={(val) => saveCore({ tax_id: val })}
+              />
+              <InlineField
+                label="Dirección fiscal"
+                value={company.billing_address}
+                onSave={(val) => saveCore({ billing_address: val })}
+              />
+              <InlineField
+                label="Ciudad"
+                value={company.billing_city}
+                onSave={(val) => saveCore({ billing_city: val })}
+              />
+              <InlineField
+                label="Código postal"
+                value={company.billing_postal_code}
+                onSave={(val) => saveCore({ billing_postal_code: val })}
+              />
+              <InlineField
+                label="País"
+                value={company.country}
+                onSave={(val) => saveCore({ country: val })}
+              />
+            </div>
+          </div>
+
+          {/* Otras propiedades personalizadas fuera de Cuestionario Operativo */}
+          <CustomFieldsPanel
+            entityType="company"
+            definitions={definitions}
+            values={company.custom_fields}
+            onUpdateField={saveCustom}
+            onDefinitionCreated={onDefinitionCreated}
+            onDefinitionUpdated={onDefinitionUpdated}
+            excludeSections={["Cuestionario Operativo"]}
+          />
+        </div>
+      )}
+
+      {tab === "proyecto" && (
+        <OperationalProjectPanel
+          companyName={company.name}
+          companyValues={company.custom_fields}
+          companyDefinitions={definitions}
+          onUpdateCompanyField={saveCustom}
+          companyDeals={deals}
+        />
+      )}
+
+      {tab === "relaciones" && (
+        <div className="space-y-6">
+          {/* Negocios / Proyectos */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <Briefcase className="h-3.5 w-3.5" />
+                Negocios / Proyectos ({deals.length})
+              </h3>
+              <Link
+                href="/pipelines"
+                className="text-xs font-medium text-slate-600 hover:text-slate-950"
+              >
+                Ir a Pipelines →
+              </Link>
+            </div>
+            {deals.length === 0 ? (
+              <p className="text-xs text-slate-400">Sin negocios asociados.</p>
+            ) : (
+              <div className="divide-y divide-slate-100 rounded-md border border-slate-200 bg-white">
+                {deals.map((d) => (
+                  <div
+                    key={d.id}
+                    className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-900">{d.title}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {d.stage_name && (
+                          <Badge variant="default">{d.stage_name}</Badge>
+                        )}
+                        <Badge
+                          variant={
+                            d.status === "won"
+                              ? "success"
+                              : d.status === "lost"
+                                ? "destructive"
+                                : "brand"
+                          }
+                        >
+                          {d.status === "won"
+                            ? "Ganado"
+                            : d.status === "lost"
+                              ? "Perdido"
+                              : "Abierto"}
+                        </Badge>
+                      </div>
+                    </div>
+                    <span className="shrink-0 font-semibold text-slate-900">
+                      {formatCurrencyEUR(d.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Contactos vinculados */}
+          <div className="space-y-2 border-t border-slate-200 pt-4">
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <Users className="h-3.5 w-3.5" />
+                Contactos ({contacts.length})
+              </h3>
+              <Link
+                href={`/contacts?companyId=${company.id}`}
+                className="text-xs font-medium text-slate-600 hover:text-slate-950"
+              >
+                Ver todos →
+              </Link>
+            </div>
+            {contacts.length === 0 ? (
+              <p className="text-xs text-slate-400">Sin contactos asociados.</p>
+            ) : (
+              <div className="divide-y divide-slate-100 rounded-md border border-slate-200 bg-white">
+                {contacts.map((c) => (
+                  <Link
+                    key={c.id}
+                    href={`/contacts?id=${c.id}`}
+                    className="flex items-center justify-between px-3 py-2 text-xs hover:bg-slate-50"
+                  >
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        {[c.first_name, c.last_name].filter(Boolean).join(" ")}
+                      </p>
+                      <p className="text-slate-500">{c.job_title ?? c.email ?? "—"}</p>
+                    </div>
+                    <span className="text-slate-400">{c.email ?? ""}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === "actividad" && <ActivityMiniList activities={activities} />}
     </SlideOver>
   );
 }

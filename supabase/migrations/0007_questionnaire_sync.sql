@@ -200,6 +200,7 @@ DECLARE
   v_contact_cf JSONB;
   v_deal_cf JSONB;
   v_company_id UUID;
+  v_existing_company_id UUID;
   v_contact_id UUID;
   v_pipeline_id UUID;
   v_stage_id UUID;
@@ -284,8 +285,19 @@ BEGIN
     END IF;
   END IF;
 
-  -- 1. Deduplicación / creación / enriquecimiento de Empresa
-  IF v_domain IS NOT NULL THEN
+  -- 1. Comprobar primero si el contacto ya existe y tiene empresa vinculada
+  SELECT id, company_id
+  INTO v_contact_id, v_existing_company_id
+  FROM public.contacts
+  WHERE LOWER(email) = v_email
+  LIMIT 1;
+
+  -- 2. Deduplicación / creación / enriquecimiento de Empresa
+  IF v_existing_company_id IS NOT NULL THEN
+    v_company_id := v_existing_company_id;
+  END IF;
+
+  IF v_company_id IS NULL AND v_domain IS NOT NULL THEN
     SELECT id INTO v_company_id FROM public.companies WHERE domain = v_domain LIMIT 1;
   END IF;
 
@@ -308,20 +320,27 @@ BEGIN
       v_created_company := TRUE;
     END IF;
   ELSE
-    UPDATE public.companies
+    UPDATE public.companies c
     SET
-      name = COALESCE(NULLIF(name, ''), v_company_name),
-      domain = COALESCE(domain, v_domain),
-      website = COALESCE(NULLIF(website, ''), v_website),
-      industry = COALESCE(v_industry, industry),
-      company_size = COALESCE(v_company_size, company_size),
-      custom_fields = custom_fields || v_company_cf,
+      name = COALESCE(NULLIF(c.name, ''), v_company_name),
+      domain = CASE
+        WHEN c.domain IS NULL AND v_domain IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM public.companies other
+            WHERE other.domain = v_domain AND other.id <> c.id
+          )
+          THEN v_domain
+        ELSE c.domain
+      END,
+      website = COALESCE(NULLIF(c.website, ''), v_website),
+      industry = COALESCE(v_industry, c.industry),
+      company_size = COALESCE(v_company_size, c.company_size),
+      custom_fields = c.custom_fields || v_company_cf,
       updated_at = NOW()
-    WHERE id = v_company_id;
+    WHERE c.id = v_company_id;
   END IF;
 
-  -- 2. Deduplicación / creación / enriquecimiento de Contacto
-  SELECT id INTO v_contact_id FROM public.contacts WHERE LOWER(email) = v_email LIMIT 1;
+  -- 3. Creación / enriquecimiento de Contacto
   IF v_contact_id IS NULL THEN
     INSERT INTO public.contacts (
       company_id, first_name, last_name, email, phone, job_title, department, lead_status, lead_source, custom_fields
