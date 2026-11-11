@@ -2,19 +2,20 @@
 
 ## 1. Visión General y Stack Tecnológico
 
-Plataforma CRM hiper-optimizada para la gestión comercial interna de Deskly. Diseño enfocado en la productividad, sin fricciones, **100% basado en datos y variables estructuradas** (sin notas de texto libre), preparado para ser operado tanto por el equipo humano como por los agentes de IA de Deskly.
+Plataforma CRM hiper-optimizada para la gestión comercial y operativa interna de Deskly. Diseño flat/ortogonal B2B enfocado en la productividad, sin fricciones, **basado en datos y variables estructuradas** (con soporte controlado de eventos acotados `call_summary`/`meeting_summary` y **notas internas** `internal_note` en el Timeline), sincronizado con el **Cuestionario Operativo** de `desklyy.com/cuestionario` y preparado para ser operado tanto por el equipo humano como por los agentes de IA de Deskly.
 
-- **Frontend & Backend:** Next.js (App Router, TypeScript) + React (Server Actions para mutaciones UI + Route Handlers para `/api/v1/*` y `/api/webhooks/*`), alojado en **Vercel (Plan Hobby / Gratis)**.
-- **Base de Datos, Auth & Realtime:** **Supabase (Plan Free)** — PostgreSQL, Row Level Security estricto, Supabase Auth *invite-only* y **Supabase Realtime (WebSockets)** centralizado en un único `RealtimeProvider` en el layout sobre `deals`, `activities` y `custom_field_definitions` (compartiendo socket por pestaña y limpiando canales al desmontar para cuidar el límite de 200 conexiones concurrentes).
+- **Frontend & Backend:** Next.js 15 (App Router, TypeScript) + React (Server Actions para mutaciones UI + Route Handlers Node/Serverless para `/api/quotes/*`, `/api/v1/*` y `/api/webhooks/*`), alojado en **Vercel (Plan Hobby / Gratis)**.
+- **Base de Datos, Auth, 2FA & Realtime:** **Supabase (Plan Free)** — PostgreSQL, Row Level Security estricto, Supabase Auth *invite-only* (`disable_signup: true`), **doble factor obligatorio (2FA TOTP AAL2 con App Authenticator)** en login/middleware y **Supabase Realtime (WebSockets)** centralizado en un único `RealtimeProvider` en el layout sobre `deals`, `activities` y `custom_field_definitions` (compartiendo socket por pestaña y limpiando canales al desmontar para cuidar el límite de 200 conexiones concurrentes).
 - **Optimización Free-Tier (Vercel Hobby + Supabase Free 500 MB):**
   - Caché agresiva con `unstable_cache` / `cacheTag` + `revalidateTag('crm-schema')` en `GET /api/v1/schema` para no saturar lecturas de Postgres con llamadas repetidas de los Agentes IA.
   - Los correos guardan solo metadatos y `body_preview` en Postgres (sin HTML pesado/base64), cargando el cuerpo completo bajo demanda desde Microsoft Graph API por `ms_graph_id`.
-  - PDFs de presupuestos generados **al vuelo en servidor** (`@react-pdf/renderer` con `serverExternalPackages` en `next.config`), sin ocupar Supabase Storage ni BD.
+  - PDFs de presupuestos generados **al vuelo en servidor** (`@react-pdf/renderer` con `serverExternalPackages` y `outputFileTracingIncludes` en `next.config.ts` para incluir las fuentes estándar de `pdfkit` en Vercel Serverless), sin ocupar Supabase Storage ni BD.
   - **Cron diario compatible con Vercel Hobby** (1 ejecución/día en `vercel.json`, protegido con `CRON_SECRET`, ejecución en paralelo con `Promise.allSettled` + renovación oportunista al abrir el CRM si quedan `<48h`) que renueva las suscripciones de Microsoft Graph y mantiene activo Supabase Free (evitando pausa tras 7 días sin actividad).
-- **Estilos y UI:** Tailwind CSS, `shadcn/ui`, Lucide React, `cmdk` (Command Palette `Cmd + K`), Recharts (gráficos del Dashboard).
-- **Interacciones complejas:** `@hello-pangea/dnd` para el Kanban y constructor de etapas, **Slide-overs** (paneles laterales) para edición inline sin recargar la página.
-- **Generación de PDF:** Renderizado al vuelo en servidor (`@react-pdf/renderer`) para descargar y adjuntar presupuestos automáticamente en emails.
-- **Integraciones:** Microsoft Graph API (Outlook Email + Calendario bidireccional + renovación automática de suscripciones vía Cron diario), Webhooks firmados para Typeform/Web, REST API `/api/v1/*` para Agentes IA.
+- **Privacidad y No-Indexación:** Aplicación estrictamente privada (`src/app/robots.ts` con `Disallow: /`, meta `robots: noindex, nofollow` en `layout.tsx` y cabecera HTTP global `X-Robots-Tag` en `next.config.ts`).
+- **Estilos y UI:** Tailwind CSS, `shadcn/ui`, Lucide React, `cmdk` (Command Palette `Cmd/Ctrl + K`), Recharts (gráfica fluida continua de evolución comercial y embudo de conversión).
+- **Interacciones complejas:** `@hello-pangea/dnd` para el Kanban y constructor de etapas, **Slide-overs** (paneles laterales 360° con navegación directa 1-clic Negocio ↔ Empresa ↔ Contacto y panel operativo estructurado `OperationalProjectPanel`).
+- **Emails Corporativos, Plantillas y PDF:** Renderizado al vuelo de PDFs para descarga (`GET /api/quotes/[id]/pdf`) y envío con adjunto vía Route Handler Node dedicado (`POST /api/quotes/[id]/send`), plantilla HTML oficial unificada (`wrapWithDesklyEmailShell` para presupuestos con vista previa previa al envío y para cuestionario operativo) y **firma personal enriquecida** por usuario con conversión automática de imágenes embebidas a adjuntos inline `CID`.
+- **Integraciones:** Microsoft Graph API (Outlook Email `Inbox + SentItems` + Calendario bidireccional + renovación automática de suscripciones vía Cron diario), Webhook `/api/webhooks/leads` (ingesta estándar y sincronización `mode = 'questionnaire'` desde `desklyy.com/cuestionario`), REST API `/api/v1/*` para Agentes IA.
 
 ---
 
@@ -32,6 +33,7 @@ CREATE TABLE profiles (
   full_name TEXT NOT NULL,
   avatar_initials TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'sales' CHECK (role IN ('admin', 'sales')),
+  email_signature TEXT NOT NULL DEFAULT '',
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -253,8 +255,8 @@ CREATE TABLE activities (
   company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
   contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
   deal_id UUID REFERENCES deals(id) ON DELETE CASCADE,
-  event_type TEXT NOT NULL, -- 'stage_changed', 'variable_updated', 'quote_sent', 'email_received', 'email_sent', 'meeting_scheduled', 'meeting_updated', 'meeting_cancelled', 'call_summary', 'meeting_summary', 'lead_ingested', etc.
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb, -- para call_summary/meeting_summary: { outcome, objections[], summary_one_liner (máx. 280 chars) }
+  event_type TEXT NOT NULL, -- 'stage_changed', 'variable_updated', 'quote_sent', 'email_received', 'email_sent', 'meeting_scheduled', 'meeting_updated', 'meeting_cancelled', 'call_summary', 'meeting_summary', 'internal_note', 'lead_ingested', 'questionnaire_completed', etc.
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb, -- para call_summary/meeting_summary: { outcome, objections[], summary_one_liner }; para internal_note: { text }
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -293,25 +295,30 @@ CREATE INDEX idx_deals_custom_fields ON deals USING GIN (custom_fields);
 ALTER PUBLICATION supabase_realtime ADD TABLE deals, activities, custom_field_definitions;
 
 -- RPCs ATÓMICAS Y SEGURIDAD DE ESCRITURA (Stored Procedures)
--- 1) ingest_new_lead(payload JSONB) -> Ejecuta deduplicación + INSERT/UPDATE en companies, contacts, deals y activities en una única transacción atómica (todo o nada).
+-- 1) ingest_new_lead(payload JSONB) -> Ejecuta deduplicación + INSERT/UPDATE en companies, contacts, deals y activities en una única transacción atómica (incluyendo mode = 'questionnaire' para desklyy.com/cuestionario).
 -- 2) append_custom_field_option(field_id UUID, new_option JSONB) -> SECURITY DEFINER para que el rol 'sales' añada opciones a campos select/multi_select sin otorgar UPDATE directo en RLS sobre custom_field_definitions.
+-- 3) update_my_email_signature(signature_html TEXT) -> Permite a cualquier usuario autenticado actualizar su propia firma HTML en profiles.email_signature.
 ```
 
 ---
 
 ## 3. Estética y UI/UX (El «Look & Feel»)
 
-Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, tipografía clara, atajos de teclado y edición instantánea sin recargas.
+Interfaz B2B **flat / ortogonal** de alta densidad informativa, tipografía nativa del sistema, atajos de teclado y edición instantánea sin recargas:
 
-- **Sidebar Izquierdo:** Minimalista y oscuro (`bg-slate-950`). Solo iconos por defecto (`Dashboard`, `Empresas`, `Contactos`, `Pipelines`, `Calendario`, `Settings`) y expansible al hover.
-- **Área de Trabajo:** Fondo luminoso (`bg-slate-50`). Separación mediante bordes finos (`border-slate-200`) evitando sombras pesadas.
-- **Navegación sin recargas (Slide-overs):** Al pulsar en cualquier empresa, contacto o negocio se abre un panel lateral derecho (`Slide-over`) con edición inline de todas las variables. Al cerrarlo se conserva el estado exacto del listado o Kanban.
-- **Command Palette (`Cmd + K` / `Ctrl + K`):** Buscador global omnipresente sobre empresas, contactos, negocios y acciones rápidas (ej. "Crear negocio", "Agendar reunión", "Ir a Calendario").
-- **Fichas 360 orientadas a Variables (Cero notas libres):**
-  - En lugar de cajas de texto libre, las fichas organizan sus datos en **bloques de variables y propiedades estructuradas** agrupadas por sección (campos core + `custom_fields` dinámicos editables al clic: selects, multi-selects, importes, fechas, toggles, URLs).
-  - Para registrar contexto comercial tras llamadas o reuniones sin romper la regla de cero notas libres, se contemplan eventos estructurados (`call_summary`, `meeting_summary`) en `activities` con campos acotados (`outcome`, `objections[]`, `summary_one_liner` máx. 280 caracteres).
-  - **Creación de propiedades al vuelo desde el propio CRM:** Desde cualquier Slide-over (`Empresa`, `Contacto`, `Negocio`) o cabecera de tabla habrá un botón **`+ Nueva propiedad`** que permite a cualquier usuario crear una variable nueva al instante (nombre, tipo, sección, opciones y descripción), quedando disponible de inmediato en toda la UI y en `GET /api/v1/schema` para los agentes IA.
-  - Pestañas dentro del Slide-over del Negocio: `Variables y Detalle`, `Emails (Outlook)`, `Reuniones`, `Presupuestos`, `Timeline`.
+- **Sistema Visual y Marca:** Fondo de trabajo `#F8FAFC`, tarjetas blancas `#FFFFFF`, bordes finos `#E2E8F0`, acento corporativo `#1658F5`, textos `#0F172A` / `#334155` / `#64748B`, radios máximos de `4px`, cero sombras o degradados, padding interno amplio (`30px` en contenedores principales), alertas con borde izquierdo `3px` y logotipo oficial (`DesklyLogo` + `public/logo-deskly.jpg` + `src/app/icon.jpg`).
+- **Sidebar Izquierdo:** Minimalista y oscuro (`bg-slate-950`). Solo iconos por defecto (`Dashboard` `/`, `Empresas` `/companies`, `Contactos` `/contacts`, `Pipelines` `/pipelines`, `Calendario` `/calendar`, `Settings` `/settings`) y expansible al hover.
+- **Navegación sin recargas y enlace directo 1-clic (Slide-overs 360°):** Al pulsar en cualquier empresa, contacto o negocio se abre un panel lateral derecho (`Slide-over`) con edición inline de todas las variables y navegación cruzada directa 1-clic **Negocio ↔ Empresa ↔ Contacto** (via query params `?deal=` / `?id=`). Al cerrarlo se conserva el estado exacto del listado o Kanban.
+- **Command Palette (`Cmd + K` / `Ctrl + K`):** Buscador global conectado a datos reales de empresas, contactos, negocios y acciones rápidas.
+- **Fichas 360° Estructuradas + Cuestionario Operativo + Notas Internas:**
+  - Los datos principales se organizan en **bloques de variables y propiedades estructuradas** agrupadas por sección (campos core + `custom_fields` dinámicos editables al clic: selects, multi-selects, importes, fechas, toggles, URLs), con soporte multilínea para propiedades técnicas del **Cuestionario Operativo**.
+  - **Creación de propiedades al vuelo (`+ Nueva propiedad`):** Disponible desde cualquier Slide-over (`Empresa`, `Contacto`, `Negocio`) para crear variables nuevas al instante (nombre, tipo, sección, opciones y descripción), propagándose vía Realtime y `revalidateTag('crm-schema')`.
+  - **Panel de Proyecto Operativo (`OperationalProjectPanel`):** Vista estructurada con sub-pestañas (`Departamentos`, `Stack y Red`, `Operativa`) y edición/alta individual por tarjeta sincronizada bidireccionalmente con las 12 propiedades de `Cuestionario Operativo`, acompañada del botón **Enviar cuestionario** desde Negocios, Empresas y Contactos.
+  - **Registro de contexto y notas internas en Timeline (`ActivityMiniList`):** Eventos estructurados (`call_summary`, `meeting_summary`), hitos automáticos (`questionnaire_completed`, `quote_sent`, `stage_changed`, etc.) y **notas internas rápidas** (`internal_note`) directamente en el Timeline de cada ficha.
+  - **Pestañas por ficha:**
+    - *Negocio (`DealSlideOver`):* `Variables y Detalle`, `Proyecto`, `Presupuestos`, `Emails` (con etiquetas `Entrante`/`Saliente` y firma personal), `Reuniones`, `Timeline`.
+    - *Empresa (`CompanySlideOver`):* `Ficha`, `Proyecto y Cuestionario`, `Negocios y Contactos`, `Actividad`.
+    - *Contacto (`ContactSlideOver`):* Pestañas ordenadas con datos core (`department` + `lead_status`), `Proyecto`/empresa vinculada, negocios asociados y actividad.
 
 ---
 
@@ -320,23 +327,28 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
 ### A. Dashboard y Analítica
 
 - **Tarjetas KPI:** Leads captados este mes, Valor del Pipeline abierto (€), Tasa de Cierre (Won / Cerrados), Ticket Medio.
-- **Gráficos (Recharts):** Evolución mensual del valor ganado/pipeline (Líneas) y Embudo de Conversión por etapa (Barras).
-- **Timeline Global:** Muro en tiempo real a la derecha alimentado por `activities` vía **Supabase Realtime (WebSockets)** (ej. *"Ana ha movido Negocio X a Presupuesto"*, *"Agente IA ha actualizado variable `cif_nif` en Empresa Y"*, *"Email recibido de Contacto Z"*).
+- **Gráfica Fluida de Evolución Comercial (Recharts + Zoom/Pan continuo):** Comparativa **Pipeline creado vs Ganado** sobre una ventana temporal continua (por defecto últimos 180 días hasta hoy, configurable entre 7 y 730 días):
+  - **Zoom continuo con rueda del ratón** centrado en la posición del cursor, cambiando automáticamente la resolución entre **Por meses** (`> 150` días), **Por semanas** (`46–150` días) y **Por días** (`<= 45` días).
+  - **Arrastre horizontal con ratón / trackpad** y barra de controles accesibles (**`+`**, **`-`**, **`<`**, **`>`** y **`Hoy`**) para desplazarse o hacer zoom sin ratón, mostrando rango exacto y totales EUR de la ventana visible.
+- **Embudo de Conversión:** Gráfico de barras por etapa del pipeline activo.
+- **Próximas Acciones Pendientes:** Listado accionable con los próximos pasos (`deals.next_action` y `next_action_date`), estados de vencimiento y salto directo al negocio correspondiente.
+- **Timeline Global en Vivo:** Muro a la derecha alimentado por `activities` vía **Supabase Realtime (WebSockets)** (movimientos de etapa, actualizaciones de IA, emails, presupuestos, citas, cuestionarios completados y notas internas).
 
-### B. Módulo de Pipelines (Tablero Kanban)
+### B. Módulo de Pipelines (Tablero Kanban), Empresas y Presupuestos
 
-- **Vista Principal:** Selector de pipeline activo + columnas configurables por etapa (`is_active = TRUE`) con total acumulado (€) y contador de negocios.
+- **Vista Principal y Filtros Operativos:** Selector de pipeline activo + columnas configurables por etapa (`is_active = TRUE`) con total acumulado (€) y contador de negocios. Tanto en el tablero **Kanban** como en el listado de **Empresas** se muestran badges y filtros de **`Cuestionario ✓`** y **ERP** principal.
 - **Drag & Drop (`@hello-pangea/dnd`) + Supabase Realtime:** Actualización optimista en UI al arrastrar y persistencia inmediata en Supabase usando **Fractional Indexing** (`position DOUBLE PRECISION`, actualizando una única fila por movimiento sin cascadas Realtime) junto con `stage_id`, `stage_changed_at`, `last_activity_at` y registro en `activities`. Suscripción Realtime centralizada en `RealtimeProvider` sobre `deals` (con reconciliación durante el drag para evitar parpadeos) para que cualquier cambio realizado por otro comercial o por un Agente IA en segundo plano mueva la tarjeta en pantalla sin refrescar.
 - **Regla de Negocio Atascado:** Alerta visual en la tarjeta cuando los días transcurridos desde `GREATEST(stage_changed_at, last_activity_at)` superan `COALESCE(stage.stale_days_override, pipeline.stale_days_default)`.
-- **Tarjetas de Negocio:** Título, empresa, importe en verde (`€`), badge de prioridad, iniciales del propietario (`owner_id`) e icono de alerta si está atascado.
+- **Tarjetas de Negocio:** Título, empresa, importe en verde (`€`), badge de prioridad, badge `Cuestionario ✓` / ERP cuando aplica, iniciales del propietario (`owner_id`) e icono de alerta si está atascado.
 - **Cierre estructurado:** Si se mueve a una etapa perdida (`is_lost_stage`) o se marca `lost`, solicita seleccionar `lost_reason`.
-- **Creador de Presupuestos (PDF In-Memory sin Supabase Storage):** Integrado en el Slide-over del negocio:
+- **Creador de Presupuestos, Vista Previa HTML y PDF In-Memory sin Storage:** Integrado en `QuoteBuilder` dentro del Slide-over del negocio:
   - Líneas dinámicas con `concepto`, `cantidad`, `precio unitario`, `% descuento` y `% IVA`.
   - Cálculo automático de `subtotal`, `discount_total`, `tax_total` y `total_amount`. Al pasar un presupuesto a `sent` o `accepted`, el CRM ofrece/sincroniza `deals.amount` con la base imponible (`subtotal - discount_total`, sin IVA).
-  - **Generación al vuelo en RAM (cero Storage):** Al pulsar **Enviar por Outlook**, el Route Handler lee PostgreSQL, renderiza el PDF en memoria RAM como `Buffer` con `@react-pdf/renderer` (configurado con `serverExternalPackages`), lo codifica en Base64 y lo inyecta directamente como `attachment` en `/me/sendMail` (liberando la RAM tras confirmar el envío). Al enviarse, guarda `billing_snapshot` en `quotes`, pasa estado a `sent` y registra en `emails` y `activities`.
-  - **Re-renderizado histórico exacto:** Si meses después se quiere descargar o ver el PDF enviado, el CRM toma los datos inmutables de `quotes` (`billing_snapshot`, `quote_items`, totales) y lo vuelve a renderizar al vuelo en milisegundos.
+  - **Plantilla HTML Oficial + Firma + Vista Previa:** Antes de enviar, el comercial puede abrir una **Vista previa** fiel del correo final (shell oficial ortogonal de Deskly, saludo personalizado `Hola <first_name>,`, tabla desglosada de líneas, resumen fiscal de subtotal/descuentos/base imponible/IVA/total y **firma personal** incluida por defecto y desactivable por envío).
+  - **Generación al vuelo en RAM (cero Storage) vía `POST /api/quotes/[id]/send`:** Al pulsar **Enviar por Outlook**, el cliente llama al Route Handler Node (`outbound-mail.ts`), que lee PostgreSQL, renderiza el PDF en RAM como `Buffer` con `@react-pdf/renderer` (con `formatMoney` seguro y fuentes `pdfkit` trazadas en `next.config.ts` para Vercel Serverless), extrae las imágenes inline `CID` de la firma, adjunta el PDF en Base64 en Microsoft Graph `/me/sendMail`, guarda `billing_snapshot` en `quotes`, pasa el estado a `sent` y registra en `emails` y `activities`.
+  - **Re-renderizado histórico exacto:** `GET /api/quotes/[id]/pdf` regenera al vuelo el PDF exacto a partir de `billing_snapshot`, `quote_items` y los totales inmutables almacenados en `quotes`.
 
-### C. Configuración (Settings) y Control de Accesos
+### C. Configuración (Settings), Roles y Seguridad (2FA)
 
 #### Matriz de Roles (Supabase RLS)
 
@@ -347,18 +359,20 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
 | Editar orden/etiqueta/sección o eliminar definiciones de propiedades (`DELETE`) | Sí | **No** (sin `UPDATE`/`DELETE` directo en RLS; `key` inmutable) |
 | Eliminar registros de negocio/empresa/contacto (`DELETE`) | Sí | **No** (bloqueado por RLS) |
 | Exportación masiva de datos (CSV/JSON) | Sí | **No** |
-| Invitar / desactivar usuarios (`Settings > Equipo`) | Sí | **No** |
-| Constructor de Pipelines y Etapas | Sí | **No** |
+| Invitar / editar / desactivar usuarios (`Settings > Equipo`) | Sí | **No** |
+| Constructor de Pipelines y Etapas (crear, editar y archivar) | Sí | **No** |
 | Crear / revocar API Keys para Agentes IA | Sí | **No** |
-| Vincular su propio Outlook (`Settings > Integraciones`) | Sí | Sí |
+| Vincular su propio Outlook y editar su firma personal HTML (`Settings > Integraciones`) | Sí | Sí |
+| Configurar y verificar su propio 2FA TOTP (`Settings > Seguridad (2FA)`) | Sí | Sí |
 
 #### Submódulos de Settings
 
-1. **Equipo (Invite-Only):** Alta de usuarios mediante invitación por email desde Supabase Auth Admin API.
-2. **Constructor de Embudo:** Crear pipelines, reordenar etapas con drag & drop, asignar color, probabilidad, días de estancamiento por etapa (`stale_days_override`) y marcar etapas de cierre ganado/perdido. Archivar pipelines/etapas con **borrado lógico (`is_active = FALSE`)** y asistente de migración de negocios si la etapa aún tiene deals activos (bloqueado `ON DELETE RESTRICT` en BD).
-3. **Gestor Central de Variables y Propiedades:** Vista global (accesible para consultar, y administrable por Admin) para organizar las propiedades de Empresas, Contactos y Negocios por sección, reordenarlas, archivarlas o eliminarlas. Al crear, editar o archivar cualquier propiedad o etapa, se invalida la caché de `/api/v1/schema` (`revalidateTag('crm-schema')`). *(La creación rápida funciona además directamente desde cualquier ficha 360 o tabla del CRM).*
-4. **Integraciones:** Conexión OAuth2 de Microsoft Outlook por usuario.
-5. **API Keys:** Generación y revocación de claves para los agentes IA de Deskly (la clave completa se muestra una sola vez al crearse).
+1. **Equipo (Invite-Only):** Alta de usuarios mediante invitación por email desde Supabase Auth Admin API con campos separados `first_name` / `last_name` y cálculo automático de iniciales, además de edición de perfil/rol/estado.
+2. **Constructor de Embudo (`PipelineBuilder`):** Crear y **editar en línea** pipelines existentes (nombre, días de estancamiento por defecto) y etapas existentes (nombre, color, probabilidad %, `stale_days_override`, flags ganado/perdido), reordenar etapas con drag & drop y archivar con **borrado lógico (`is_active = FALSE`)** y asistente de migración si hay deals activos (`ON DELETE RESTRICT`).
+3. **Gestor Central de Variables y Propiedades:** Vista global para organizar las propiedades de Empresas, Contactos y Negocios por sección, reordenarlas, editarlas, archivarlas o eliminarlas, invalidando `revalidateTag('crm-schema')`. *(La creación rápida funciona además directamente desde cualquier Slide-over del CRM).*
+4. **Integraciones y Firma de Email:** Conexión OAuth2 de Microsoft Outlook por usuario (con soporte de query params `?outlook=missing_config|connected|error`) y **Editor de Firma Personal (`SignatureEditor`)** visual + HTML con negrita, cursiva, subrayado, tamaño, color, enlaces e imágenes por URL/archivo saneadas frente a XSS (`sanitizeSignatureHtml`).
+5. **Seguridad (2FA / MFA TOTP):** Alta/gestión de App Authenticator (QR y secreto manual en `MfaSettings`) exigiendo verificación **AAL2** en el paso 2 de `/login`, en `middleware.ts` y en `CrmLayout`.
+6. **API Keys:** Generación y revocación de claves para los agentes IA de Deskly (la clave completa se muestra una sola vez al crearse).
 
 ---
 
@@ -368,28 +382,30 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
 
 - **OAuth2, Seguridad y Degradación Controlada (Graceful Degradation):** Flujo Microsoft Entra ID con scopes `User.Read`, `Mail.Read`, `Mail.Send`, `Calendars.ReadWrite`, `offline_access`. Los tokens se cifran (`AES-256-GCM`) en servidor antes de guardarse en `oauth_connections`.
   - Si al refrescar el token (en una acción o en el Cron diario) Microsoft devuelve `401`/`403` (revocación, cambio de contraseña o alerta de Azure), el backend marca `is_auth_invalid = TRUE` en `oauth_connections` (evitando bucles de reintento) y muestra un **banner rojo persistente** en el CRM a ese usuario: *"Conexión con Outlook pausada. Haz clic aquí para volver a autenticarte"*. Al reconectar OAuth2, el flag vuelve a `FALSE`.
-- **Outbound (Envío de Emails):** Desde la ficha del negocio (editor de email o envío de presupuesto con PDF adjunto), el backend refresca el token si expiró y envía por `/me/sendMail`, registrando el correo en `emails` y actualizando `deals.last_activity_at`.
-- **Inbound y Sync de SentItems (Recepción y Respuestas Externas):** Suscripción Webhook de Microsoft Graph (`/subscriptions` sobre `me/messages` cubriendo tanto `Inbox` como `SentItems` para capturar respuestas enviadas desde Outlook web/móvil).
-  - Endpoint receptor valida `clientState` y consulta el correo entrante/saliente.
+- **Outbound (Envío de Emails, Cuestionario, Firma Personal y Presupuestos):**
+  - Desde la ficha del negocio (`sendDealEmailAction`), cualquier ficha 360° (`sendQuestionnaireEmailAction` con la plantilla oficial `Cuestionario Operativo Deskly`) o mediante `POST /api/quotes/[id]/send` (`outbound-mail.ts` para presupuestos con PDF adjunto), el backend refresca el token si expiró, añade la **firma personal** del usuario (con extracción de imágenes embebidas a adjuntos inline `CID` vía `extractInlineImagesForGraph` si el toggle `includeSignature` está activo) y envía por `/me/sendMail`, registrando el correo en `emails` y actualizando `deals.last_activity_at` y `activities`.
+- **Inbound y Sync de SentItems (Recepción, Respuestas Externas y Conciliación CRM):** Suscripción Webhook de Microsoft Graph (`/subscriptions` sobre `me/messages` cubriendo tanto `Inbox` como `SentItems` para capturar respuestas enviadas desde Outlook web/móvil).
+  - Endpoint receptor (`/api/webhooks/microsoft-graph`) valida `GRAPH_WEBHOOK_CLIENT_STATE` (*fail-closed* con `crypto.timingSafeEqual`) y consulta el correo entrante/saliente.
+  - Cuando `SentItems` notifica un correo recién enviado desde el propio CRM, `processMailNotification` concilia y actualiza el registro temporal `crm-sent-*` con el `ms_graph_id` e `internet_message_id` reales sin duplicar fila ni actividad.
   - Si el remitente/destinatario externo coincide con un registro en `contacts`, deduplica por `internet_message_id` (evitando duplicados si el correo entra en varios buzones internos), guarda el email en `emails` con `direction` (`inbound`/`outbound`), lo vincula al `deal` abierto más reciente de ese contacto/empresa (si existe), actualiza `last_activity_at` y registra en `activities`.
 - **Calendario Outlook en Tiempo Real (Conexión Directa y Bidireccional):**
-  - **Fuente única de verdad (sin duplicar datos ni variables de calendario):** El CRM no replica los campos de tus eventos ni crea variables para el calendario; lee, crea, edita y cancela directamente contra tu calendario real de Outlook vía Microsoft Graph API (`/me/calendarView` y `/me/events`).
-  - **Vista Agenda (`/calendario`):** Muestra en vivo todos tus eventos de Outlook (personales y comerciales). Si creas, mueves de hora o cancelas una reunión fuera del CRM (desde Outlook web/escritorio/móvil), aparece reflejado automáticamente en el CRM.
+  - **Fuente única de verdad (sin duplicar datos ni variables de calendario):** El CRM no replica los campos de tus eventos ni crea variables para el calendario; lee, crea, edita y cancela directamente contra tu calendario real de Outlook vía Microsoft Graph API (`/me/calendarView` con `$top=250` y `/me/events`).
+  - **Vista Agenda (`/calendar`):** Soporta selector de vista **Semana | Mes**, cuadrícula mensual, detalle modal por evento y alta rápida por día, reflejando en vivo tanto reuniones comerciales como eventos personales de Outlook.
   - **Asociación a Empresas, Contactos y Negocios (Automática y Manual):**
     - *Automática:* Al agendar desde una ficha (o al recibir por webhook un evento creado en Outlook cuyos asistentes coincidan con un `contact.email`), se asocia al Contacto, su Empresa y/o el Negocio en `calendar_event_links` guardando `ical_uid` y `(user_id, ms_event_id)`.
-    - *Manual desde `/calendario`:* Al hacer clic en cualquier evento existente de Outlook (incluso eventos previos o sin asistentes del CRM), puedes vincularlo o desvincularlo en un clic a cualquier **Empresa**, **Contacto** o **Negocio** del CRM, apareciendo desde ese momento en su pestaña `Reuniones`.
-  - **CRM → Outlook (`POST` / `PATCH` / `DELETE /me/events`):** Desde la pestaña `Reuniones` de una Empresa/Contacto/Negocio o desde `/calendario`, ves tus huecos libres/ocupados y agendas, editas o cancelas la reunión con asistentes y enlace automático de Microsoft Teams (`isOnlineMeeting: true`). Outlook envía las invitaciones por email; el CRM guarda solo el puente mínimo (`calendar_event_links`).
+    - *Manual desde `/calendar`:* Al hacer clic en cualquier evento existente de Outlook (incluso eventos previos o sin asistentes del CRM), puedes vincularlo o desvincularlo en un clic a cualquier **Empresa**, **Contacto** o **Negocio** del CRM, apareciendo desde ese momento en su pestaña `Reuniones`.
+  - **CRM → Outlook (`POST` / `PATCH` / `DELETE /me/events`):** Desde la pestaña `Reuniones` de una ficha o desde `/calendar`, ves tus huecos libres/ocupados y agendas, editas o cancelas la reunión con asistentes y enlace automático de Microsoft Teams (`isOnlineMeeting: true`). Outlook envía las invitaciones por email; el CRM guarda solo el puente mínimo (`calendar_event_links`).
   - **Outlook → CRM (Webhook `/me/events` + matching por asistentes y deduplicación por `ical_uid`):** Si agendas, modificas o cancelas una reunión directamente desde Outlook fuera del CRM y uno de los asistentes coincide con un `contact.email` (o el evento está en `calendar_event_links`), el CRM detecta el cambio, deduplica por `ical_uid` si varios usuarios internos asisten a la misma reunión (evitando duplicar registros en el Timeline), actualiza `deals.last_activity_at` y registra el evento en `activities` (`meeting_scheduled`, `meeting_updated`, `meeting_cancelled`).
 - **Renovación de Suscripciones (Compatible Vercel Hobby + Anti-pausa Supabase Free):** Job diario en `vercel.json` (1 ejecución/día, límite del plan Hobby) protegido con `Authorization: Bearer ${CRON_SECRET}` que renueva en paralelo (`Promise.allSettled`) las suscripciones Graph (Mail y Calendar, cuyo máximo en Graph es ~4230 min / <3 días) y mantiene activo Supabase Free. Adicionalmente, al entrar un usuario al CRM se ejecuta una renovación oportunista en segundo plano si su suscripción vence en `<48h`.
 
-### B. Ingesta de Leads (`/api/webhooks/leads` vía RPC Atómico)
+### B. Ingesta de Leads y Cuestionario Operativo (`/api/webhooks/leads` vía RPC Atómico)
 
-- **Seguridad:** Validación obligatoria de firma HMAC (`Typeform-Signature`) o secret header configurado.
-- **Transacción Atómica (`supabase.rpc('ingest_new_lead', ...)`):** Para evitar datos huérfanos si falla una llamada intermedia de red/timeout, toda la ingesta se ejecuta en **una única transacción atómica** dentro de una función PL/pgSQL (`ingest_new_lead(payload JSONB)`):
-  1. Deduplica y reutiliza o crea la empresa en `companies` por `domain` (extrayendo dominio web o email corporativo, ignorando dominios genéricos como `gmail.com`, `outlook.com`, `hotmail.com`).
-  2. Deduplica y reutiliza o crea el contacto en `contacts` por `email` (normalizado en minúsculas), rellenando solo campos vacíos si ya existía.
-  3. Crea el `deal` en la primera etapa del pipeline por defecto mapeando las variables estructuradas (`custom_fields` + campos core).
-  4. Registra el evento `lead_ingested` en `activities`. Si cualquier paso falla, Postgres revierte toda la operación (o se crea todo, o no se crea nada).
+- **Seguridad:** Validación obligatoria de firma HMAC (`Typeform-Signature`) o secret header (`x-webhook-secret` validado contra `LEADS_WEBHOOK_SECRET`).
+- **Transacción Atómica (`supabase.rpc('ingest_new_lead', ...)`):** Para evitar datos huérfanos si falla una llamada intermedia de red/timeout, toda la ingesta se ejecuta en **una única transacción atómica** dentro de una función PL/pgSQL (`ingest_new_lead(payload JSONB)`), soportando tanto captura estándar de leads como **`mode = 'questionnaire'`** desde `desklyy.com/cuestionario`:
+  1. Deduplica y reutiliza o crea la empresa en `companies` por `domain` o nombre exacto (priorizando siempre el `company_id` ya vinculado al contacto existente para no duplicar empresas, e ignorando dominios genéricos como `gmail.com`, `outlook.com`, `hotmail.com`).
+  2. Deduplica y reutiliza o crea el contacto en `contacts` por `email` (normalizado en minúsculas, con `first_name`, `last_name` y `phone`), rellenando solo campos vacíos si ya existía y promocionando `lead_status` a `'En Conversación'` en cuestionarios recibidos.
+  3. Reutiliza el `deal` abierto existente cuando corresponde al cuestionario (fusionando las 12 propiedades de `Cuestionario Operativo` sin alterar etapa ni importe) o crea uno nuevo en la primera etapa del pipeline por defecto.
+  4. Registra el evento (`lead_ingested` o `questionnaire_completed`) en `activities` y ejecuta `revalidatePath` sobre `/`, `/companies`, `/contacts` y `/pipelines`. Si cualquier paso falla, Postgres revierte toda la operación.
 
 ### C. Portal API para Agentes IA (`/api/v1/*`)
 
@@ -412,25 +428,25 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
 
 ## 6. Plan de Ejecución por Fases
 
-1. **Fase 1: Infraestructura, SQL y Auth.**
-   - Inicializar Next.js + TypeScript + Tailwind + `shadcn/ui`.
+1. **Fase 1: Infraestructura, SQL, Auth y Privacidad.**
+   - Inicializar Next.js 15 + TypeScript + Tailwind + `shadcn/ui`.
    - Desplegar esquema SQL completo en Supabase, políticas RLS (`admin` vs `sales`) y trigger de creación de `profiles`.
-   - Login *invite-only* y layout principal (Sidebar oscuro colapsable `bg-slate-950`, área `bg-slate-50`, Command Palette base).
-2. **Fase 2: Motor de Datos Estructurado (Empresas y Contactos).**
-   - Listados densos con búsqueda, filtros y creación rápida.
-   - Slide-overs 360 con edición inline de variables core + motor dinámico de `custom_fields` + **botón `+ Nueva propiedad`** para que cualquier usuario cree nuevas variables desde el propio CRM + conexión real de `Cmd + K`.
-3. **Fase 3: Pipelines Kanban y Creador de Presupuestos.**
-   - Tablero Kanban con `@hello-pangea/dnd`, actualización optimista + **Supabase Realtime** sobre `deals` (con reconciliación durante el drag), orden en columna, cálculo de negocio atascado y modal de motivo de pérdida.
-   - Slide-over completo del Negocio (multi-contacto, variables + creación rápida de propiedades de negocio, presupuestos con líneas/IVA/descuentos y generación de PDF al vuelo en servidor).
+   - Login *invite-only* (`disable_signup: true`), **2FA TOTP AAL2 obligatorio**, política de no-indexación (`/robots.txt`, `noindex, nofollow`, `X-Robots-Tag`) y layout principal (`Sidebar` oscuro colapsable `bg-slate-950`, área `#F8FAFC` ortogonal B2B, Command Palette).
+2. **Fase 2: Motor de Datos Estructurado (Empresas, Contactos y Proyecto Operativo).**
+   - Listados densos con búsqueda, filtros (incluyendo `Cuestionario ✓` / ERP en Empresas y `department` / `lead_status` en Contactos) y creación rápida.
+   - Slide-overs 360° con navegación directa 1-clic, edición inline de variables core + motor dinámico de `custom_fields`, botón **`+ Nueva propiedad`** y conexión real de `Cmd/Ctrl + K`.
+3. **Fase 3: Pipelines Kanban, Presupuestos HTML/PDF y Timeline.**
+   - Tablero Kanban con `@hello-pangea/dnd`, actualización optimista + **Supabase Realtime** sobre `deals` (con reconciliación durante el drag), filtros `Cuestionario ✓`/ERP, cálculo de negocio atascado y modal de motivo de pérdida.
+   - Slide-over completo del Negocio (`Variables y Detalle`, `Proyecto` con `OperationalProjectPanel`, multi-contacto, presupuestos con **Vista previa HTML** oficial + firma + envío por `POST /api/quotes/[id]/send` con PDF en RAM, emails `Entrante`/`Saliente`, reuniones y Timeline con notas internas `internal_note`).
 4. **Fase 4: Panel de Administración (Settings).**
-   - Gestión de equipo (invitaciones Supabase), Constructor de Pipelines y Etapas (drag & drop, reglas `stale_days`, borrado lógico `is_active = FALSE` y migración segura), Gestor Central de Variables/Propiedades (invalidando caché con `revalidateTag('crm-schema')`) y Gestión de API Keys.
+   - Gestión de equipo (`first_name`/`last_name` e invitaciones Supabase), Constructor de Pipelines y Etapas (creación, edición inline, drag & drop, reglas `stale_days`, borrado lógico `is_active = FALSE` y migración segura), Gestor Central de Variables/Propiedades (`revalidateTag('crm-schema')`), Integraciones Outlook + Firma Personal HTML, Seguridad 2FA (TOTP) y API Keys.
 5. **Fase 5: Sincronización Bidireccional Outlook (Email + Calendario Directo).**
-   - Flujo OAuth2 con cifrado de tokens (`Mail` + `Calendars.ReadWrite`), envío de correos y presupuestos con PDF adjunto en RAM (`/me/sendMail`), receptor webhook inbound con matching de contactos (guardando solo `body_preview` ligero para cuidar los 500 MB de Supabase Free).
+   - Flujo OAuth2 con cifrado de tokens (`Mail` + `Calendars.ReadWrite`), envío de correos, cuestionarios (`Cuestionario Operativo Deskly`) y presupuestos con firma HTML + imágenes inline `CID` y PDF adjunto en RAM (`/me/sendMail`), receptor webhook inbound/`SentItems` con conciliación `crm-sent-*` y verificación *timing-safe* (`body_preview` ligero en Postgres).
    - Graceful degradation con `is_auth_invalid` y banner rojo persistente de reconexión si Microsoft revoca el token.
-   - Conexión directa y bidireccional con Outlook Calendar (`/me/calendarView`, `POST/PATCH/DELETE /me/events`), vista `/calendario`, tabla puente `calendar_event_links`, webhook `/me/events` para cambios hechos fuera del CRM y Cron diario en Vercel Hobby (`vercel.json`) de renovación de suscripciones Graph.
-6. **Fase 6: Dashboard, Webhook de Leads y API IA.**
-   - KPIs, gráficos Recharts y Timeline Global en vivo con **Supabase Realtime** (`activities`).
-   - Endpoint `/api/webhooks/leads` con firma HMAC y **RPC atómico `ingest_new_lead()`** en Postgres (cero datos huérfanos).
+   - Conexión directa y bidireccional con Outlook Calendar (`/me/calendarView`, `POST/PATCH/DELETE /me/events`), vista `/calendar` (`Semana | Mes`, detalle modal y alta rápida por día), tabla puente `calendar_event_links`, webhook `/me/events` para cambios hechos fuera del CRM y Cron diario en Vercel Hobby (`vercel.json`) de renovación de suscripciones Graph.
+6. **Fase 6: Dashboard Fluido, Webhook de Leads/Cuestionario y API IA.**
+   - KPIs, **gráfica fluida continua** Recharts (zoom por rueda del ratón + arrastre horizontal + botones `+`/`-`/`<`/`>`/`Hoy`), embudo por etapa, panel **Próximas acciones pendientes** y Timeline Global en vivo con **Supabase Realtime** (`activities`).
+   - Endpoint `/api/webhooks/leads` con firma HMAC/secret y **RPC atómico `ingest_new_lead()`** (captura estándar y `mode = 'questionnaire'` desde `desklyy.com/cuestionario` con 12 variables fijas en `0007`).
    - Suite `/api/v1/*` completa con paginación estricta (`limit=10` por defecto en `/activities` y `/emails`), `/api/v1/schema` cacheado (`unstable_cache`) y `/api/v1/calendar/events` (previendo `pgvector` futuro para búsqueda semántica).
 
 ---
@@ -454,18 +470,18 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
   - Área de trabajo `bg-slate-50` con bordes `border-slate-200` y `RealtimeProvider` único.
   - Command Palette (`Cmd + K` / `Ctrl + K`) base funcionando para navegación rápida entre secciones.
 
-#### Fases Siguientes (Resumen de Control)
-- [x] **Fase 2:** Listados densos + Slide-overs 360 + Motor dinámico de `custom_fields` + Botón `+ Nueva propiedad` in-app (con `revalidateTag('crm-schema')` y Realtime) + Búsqueda real en `Cmd + K`.
-- [x] **Fase 3:** Tablero Kanban (`@hello-pangea/dnd` + Fractional Indexing `DOUBLE PRECISION` + `RealtimeProvider` único) + Alertas de estancamiento + Multi-contacto + Creador de Presupuestos y PDF al vuelo (`serverExternalPackages`).
-- [x] **Fase 4:** Settings (Equipo invite-only, Constructor de Pipelines con borrado lógico `is_active` y migración de etapas, Gestor Central de Variables/Propiedades, API Keys).
-- [x] **Fase 5:** OAuth2 Microsoft Outlook (Mail `Inbox + SentItems` + Calendario directo) + Deduplicación multi-buzón (`internet_message_id` e `ical_uid`) + Graceful degradation (`is_auth_invalid` + banner) + Envío `/me/sendMail` con PDF en RAM + Vista `/calendario` + Cron diario (`CRON_SECRET`, `Promise.allSettled`) + renovación oportunista `<48h`.
-- [x] **Fase 6:** Dashboard KPIs & Recharts + Timeline Global Realtime (`activities`) + `/api/webhooks/leads` (RPC atómico `ingest_new_lead`) + Suite `/api/v1/*` paginada (`limit=10` en historiales) + `/api/v1/schema` cacheado.
+#### Fases Siguientes y Evolución Operativa (Resumen de Control)
+- [x] **Fase 2:** Listados densos + Slide-overs 360° (navegación 1-clic Negocio ↔ Empresa ↔ Contacto) + Motor dinámico de `custom_fields` + Botón `+ Nueva propiedad` in-app (con `revalidateTag('crm-schema')` y Realtime) + Búsqueda real en `Cmd/Ctrl + K` + `department` y `lead_status` en Contactos.
+- [x] **Fase 3:** Tablero Kanban (`@hello-pangea/dnd` + Fractional Indexing `DOUBLE PRECISION` + `RealtimeProvider` único) + Alertas de estancamiento + Filtros `Cuestionario ✓` / ERP + Multi-contacto + Panel `OperationalProjectPanel` + Creador de Presupuestos con Vista Previa HTML y envío PDF al vuelo vía `POST /api/quotes/[id]/send` (`outputFileTracingIncludes` en `next.config.ts`).
+- [x] **Fase 4:** Settings (Equipo invite-only con nombre/apellidos, Constructor de Pipelines con edición inline y borrado lógico `is_active`, Gestor Central de Variables/Propiedades, Integraciones Outlook + Firma Personal HTML `SignatureEditor`, Seguridad 2FA TOTP `MfaSettings`, API Keys).
+- [x] **Fase 5:** OAuth2 Microsoft Outlook (Mail `Inbox + SentItems` + Calendario directo) + Conciliación `SentItems` (`crm-sent-*`) y deduplicación multi-buzón (`internet_message_id` e `ical_uid`) + Graceful degradation (`is_auth_invalid` + banner) + Firma personal con imágenes `CID` + Plantilla oficial `Cuestionario Operativo Deskly` + Vista `/calendar` (`Semana | Mes`) + Cron diario (`CRON_SECRET`, `Promise.allSettled`) + renovación oportunista `<48h`.
+- [x] **Fase 6:** Dashboard KPIs + Gráfica fluida continua (zoom por rueda del ratón, arrastre y controles `+`/`-`/`<`/`>`/`Hoy`) + Embudo de conversión + Próximas acciones pendientes + Timeline Global Realtime (`activities` con notas internas `internal_note`) + `/api/webhooks/leads` (RPC atómico `ingest_new_lead` + `mode = 'questionnaire'`) + Suite `/api/v1/*` paginada + `/api/v1/schema` cacheado + No-indexación global (`robots.txt`, `noindex`, `X-Robots-Tag`) y 2FA AAL2 obligatorio.
 
 ### B. Estado de Base de Datos (Supabase)
 
 | Elemento / Tabla | Estado | Migración | RLS Activo | Notas |
 | :--- | :---: | :---: | :---: | :--- |
-| `profiles` | Desplegado | `0001`/`0004` | Sí | Sincronizada con `auth.users` (`first_name`, `last_name`, `full_name`, `avatar_initials`) |
+| `profiles` | Desplegado | `0001`/`0004`/`0006` | Sí | Sincronizada con `auth.users` (`first_name`, `last_name`, `full_name`, `avatar_initials`, `email_signature`) |
 | `custom_field_definitions` | Desplegado | `0001`/`0007` | Sí | Creación por usuarios + 12 variables fijas bajo sección `Cuestionario Operativo`; `key` inmutable; Realtime activo |
 | `companies` | Desplegado | `0001` | Sí | Incluye `tax_id`, `domain`, `custom_fields` |
 | `contacts` | Desplegado | `0001`/`0005` | Sí | Incluye `email UNIQUE`, `department`, `lead_status`, `custom_fields` + índices GIN/btree |
@@ -478,11 +494,12 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
 | `oauth_connections` | Desplegado | `0001` | Sí | Tokens Outlook cifrados + `is_auth_invalid` + suscripciones Mail y Calendar |
 | `emails` | Desplegado | `0001` | Sí | Solo `body_preview` ligero + `internet_message_id` para deduplicación multi-buzón |
 | `calendar_event_links` | Desplegado | `0001` | Sí | Puente mínimo `UNIQUE (user_id, ms_event_id)` + `ical_uid` para deduplicar Timeline |
-| `activities` | Desplegado | `0001` | Sí | Timeline estructurado (incluye `call_summary`/`meeting_summary`); Realtime activo |
+| `activities` | Desplegado | `0001` | Sí | Timeline estructurado (`call_summary`/`meeting_summary`, `internal_note`, `questionnaire_completed`); Realtime activo |
 | `api_keys` | Desplegado | `0001` | Sí | Claves SHA-256 para Agentes IA |
 | Triggers (`updated_at`, `on_auth_user_created`) | Desplegado | `0001`/`0002` | N/A | Automatización base + inmutabilidad `key` |
 | RPC `ingest_new_lead(JSONB)` | Desplegado | `0002`/`0005`/`0007` | N/A | Transacción atómica todo-o-nada para webhook de leads y `mode = 'questionnaire'` |
 | RPC `append_custom_field_option(UUID, JSONB)` | Desplegado | `0002` | N/A | `SECURITY DEFINER` para que `sales` añada opciones sin `UPDATE` directo en RLS |
+| RPC `update_my_email_signature(TEXT)` | Desplegado | `0006` | N/A | Actualización segura de la firma HTML personal en `profiles.email_signature` |
 | Publicación Realtime (`deals`, `activities`, `custom_field_definitions`) | Desplegado | `0001` | N/A | WebSockets centralizados en `RealtimeProvider` (respetando límite Free 200 conexiones) |
 | Seed Pipeline inicial | Desplegado | `0002` | N/A | Pipeline *"Ventas Deskly"* y 6 etapas iniciales verificados en BD |
 
@@ -536,5 +553,5 @@ Interfaz estilo **Linear / Vercel**: densidad de información alta pero limpia, 
 | 2026-11-11 | UI / Fichas de Proyecto | Reorganizados `CompanySlideOver` (pestañas `Ficha`, `Proyecto y Cuestionario`, `Negocios y Contactos`, `Actividad`) y `DealSlideOver` (nueva pestaña `Proyecto`) mediante el panel estructurado `OperationalProjectPanel` con sub-vistas (`Departamentos`, `Stack y Red`, `Operativa`), carga de `deals` en `getCompanyRelationsAction` y de empresa vinculada en `getDealDetailsAction` | `src/components/crm/operational-project-panel.tsx`, `src/components/crm/company-slide-over.tsx`, `src/components/crm/deal-slide-over.tsx`, `src/components/crm/custom-fields-panel.tsx`, `src/app/(crm)/actions/crm-entities.ts`, `src/app/(crm)/actions/deals-and-quotes.ts`, `plan.md` |
 | 2026-11-11 | UX / Productividad | Añadida navegación directa 1-clic Negocio ↔ Empresa ↔ Contacto (`?deal=` / `?id=`), badges y filtros de `Cuestionario ✓` / ERP en Kanban (`KanbanBoard`) y Empresas (`CompaniesView`), pestañas ordenadas en `ContactSlideOver`, edición/alta individual por tarjeta en `OperationalProjectPanel`, notas internas en Timeline (`internal_note`) y panel **Próximas acciones pendientes** en Dashboard | `src/components/crm/operational-project-panel.tsx`, `src/components/crm/company-slide-over.tsx`, `src/components/crm/deal-slide-over.tsx`, `src/components/crm/contact-slide-over.tsx`, `src/components/crm/kanban-board.tsx`, `src/components/crm/companies-view.tsx`, `src/components/crm/activity-mini-list.tsx`, `src/components/crm/dashboard-view.tsx`, `src/app/(crm)/page.tsx`, `src/app/(crm)/actions/deals-and-quotes.ts`, `plan.md` |
 | 2026-11-11 | Email / Presupuestos | Unificada la plantilla HTML oficial de Deskly (`wrapWithDesklyEmailShell` y `buildQuoteEmailHtml`: logo, marco ortogonal, tipografía, azul `#1658F5`, saludo personalizado `Hola <first_name>,`, tabla desglosada por concepto/cantidad/precio/importe, desglose de subtotal/descuentos/base imponible/IVA/total y firma) en los envíos de presupuestos por Outlook, añadida **Vista previa** en `QuoteBuilder`, trasladado el envío con PDF adjunto a `POST /api/quotes/[id]/send` (`runtime = "nodejs"` vía `outbound-mail.ts` y `formatMoney` seguro en `quote-pdf.tsx`) e incluidas las fuentes estándar de `pdfkit` (`outputFileTracingIncludes` en `next.config.ts`) para Vercel Serverless | `next.config.ts`, `src/lib/email/templates.ts`, `src/lib/crm/outbound-mail.ts`, `src/lib/pdf/quote-pdf.tsx`, `src/app/api/quotes/[id]/send/route.ts`, `src/app/(crm)/actions/outlook.ts`, `src/components/crm/quote-builder.tsx`, `src/components/crm/deal-slide-over.tsx`, `plan.md` |
-| 2026-11-11 | Dashboard / Gráfica | Añadido selector **Mensual \| Diaria** y navegación temporal (`<`, `>`, `Hoy`) en la gráfica de evolución de `DashboardView` (`buildEvolutionSeries`, con totales de la ventana y tooltip en EUR) alimentada desde `page.tsx` | `src/components/crm/dashboard-view.tsx`, `src/app/(crm)/page.tsx`, `plan.md` |
+| 2026-11-11 | Dashboard / Gráfica | Reemplazada la gráfica estática por navegación fluida con rueda del ratón (zoom continuo centrado en el cursor entre resolución mensual, semanal y diaria) y arrastre horizontal en `DashboardView` (`buildFluidEvolutionSeries`, controles `+`/`-`/`<`/`>`/`Hoy` y totales EUR del rango) alimentada desde `page.tsx`; actualizada además toda la descripción general y técnica del CRM en `plan.md` (Secciones 1–7) al estado actual | `src/components/crm/dashboard-view.tsx`, `src/app/(crm)/page.tsx`, `plan.md` |
 
