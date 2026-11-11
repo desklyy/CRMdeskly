@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { verifyActiveSession } from "@/lib/supabase/auth-guard";
 import { encryptToken, verifyOAuthState } from "@/lib/security/crypto";
 import {
   ensureUserSubscriptions,
@@ -17,13 +18,20 @@ export async function GET(request: NextRequest) {
 
   if (errorParam || !code || !state) {
     return NextResponse.redirect(
-      `${origin}/settings?outlook=error&reason=${encodeURIComponent(errorParam || "missing_code")}`
+      `${origin}/settings?outlook=error&reason=${encodeURIComponent(
+        errorParam ? "oauth_denied" : "missing_code"
+      )}`
     );
   }
 
   const verified = verifyOAuthState(state);
   if (!verified) {
     return NextResponse.redirect(`${origin}/settings?outlook=error&reason=invalid_state`);
+  }
+
+  const session = await verifyActiveSession();
+  if (!session.ok || session.user.id !== verified.uid) {
+    return NextResponse.redirect(`${origin}/settings?outlook=error&reason=session_mismatch`);
   }
 
   try {
@@ -46,9 +54,8 @@ export async function GET(request: NextRequest) {
     );
 
     if (upsertErr) {
-      return NextResponse.redirect(
-        `${origin}/settings?outlook=error&reason=${encodeURIComponent(upsertErr.message)}`
-      );
+      console.error("[outlook/callback] DB upsert failed:", upsertErr.message);
+      return NextResponse.redirect(`${origin}/settings?outlook=error&reason=save_failed`);
     }
 
     await ensureUserSubscriptions(verified.uid).catch((err) => {
@@ -57,10 +64,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(`${origin}/settings?outlook=connected`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "oauth_failed";
-    return NextResponse.redirect(
-      `${origin}/settings?outlook=error&reason=${encodeURIComponent(message)}`
-    );
+    console.error("[outlook/callback] OAuth exchange failed:", err);
+    return NextResponse.redirect(`${origin}/settings?outlook=error&reason=oauth_failed`);
   }
 }
 

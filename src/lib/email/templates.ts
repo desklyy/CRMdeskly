@@ -20,16 +20,50 @@ export function sanitizeSignatureHtml(rawHtml: string): string {
   if (!trimmed) return "";
 
   let clean = trimmed
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
-    .replace(/<(iframe|object|embed|form|meta|link|base)[^>]*?>[\s\S]*?<\/\1>/gi, "")
-    .replace(/<(iframe|object|embed|form|meta|link|base)[^>]*?\/?>/gi, "")
-    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, '$1=$2#$2')
     .replace(
-      /(src)\s*=\s*(["'])\s*data:(?!image\/(?:png|jpeg|jpg|gif|webp);base64,)[\s\S]*?\2/gi,
+      /<(script|style|iframe|object|embed|form|svg|math|noscript|template)[\s\S]*?>[\s\S]*?<\/\1>/gi,
       ""
-    );
+    )
+    .replace(
+      /<\/?(script|style|iframe|object|embed|form|input|button|textarea|select|option|meta|link|base|svg|math|noscript|template)\b[^>]*\/?>/gi,
+      ""
+    )
+    // Eliminar cualquier atributo on* (con comillas dobles, simples o sin comillas)
+    .replace(/\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    // Eliminar atributos peligrosos como formaction / srcset / ping
+    .replace(/\s+(formaction|srcset|ping|xlink:href)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    // Bloquear javascript:, vbscript: y data: no-imagen incluso con entidades o espacios intercalados
+    .replace(/(href|src)\s*=\s*(["'])\s*([\s\S]*?)\2/gi, (full, attr: string, quote: string, val: string) => {
+      const normalized = val
+        .replace(/&#x?[0-9a-f]+;?/gi, "")
+        .replace(/[\u0000-\u0020]+/g, "")
+        .toLowerCase();
+      if (
+        normalized.startsWith("javascript:") ||
+        normalized.startsWith("vbscript:")
+      ) {
+        return `${attr}=${quote}#${quote}`;
+      }
+      if (normalized.startsWith("data:")) {
+        if (
+          attr.toLowerCase() === "src" &&
+          /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[a-z0-9+/=]+$/i.test(val.trim())
+        ) {
+          return full;
+        }
+        return `${attr}=${quote}#${quote}`;
+      }
+      return full;
+    })
+    // Bloquear expresiones CSS / url(...) potencialmente peligrosas dentro de style=""
+    .replace(/style\s*=\s*(["'])([\s\S]*?)\1/gi, (_full, quote: string, css: string) => {
+      const safeCss = css
+        .replace(/expression\s*\([^)]*\)/gi, "")
+        .replace(/url\s*\([^)]*\)/gi, "")
+        .replace(/-moz-binding\s*:[^;]*/gi, "")
+        .replace(/behavior\s*:[^;]*/gi, "");
+      return `style=${quote}${safeCss}${quote}`;
+    });
 
   // Si solo es texto sin HTML visible, comprobar que no esté vacío tras limpiar etiquetas vacías
   const textOnly = clean

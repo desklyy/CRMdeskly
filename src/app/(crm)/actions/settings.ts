@@ -2,7 +2,7 @@
 
 import crypto from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { requireActiveUser } from "@/lib/supabase/auth-guard";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildFullName, computeAvatarInitials } from "@/lib/crm/profiles";
 import type { Database, Json, UserRole } from "@/types/database";
@@ -13,24 +13,7 @@ type CustomFieldUpdate =
   Database["public"]["Tables"]["custom_field_definitions"]["Update"];
 
 async function requireAdmin() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) throw new Error("Sesión no iniciada");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, role, is_active")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile || !profile.is_active || profile.role !== "admin") {
-    throw new Error("Acción restringida a administradores");
-  }
-
-  return { supabase, user, profile };
+  return requireActiveUser({ requireAdmin: true });
 }
 
 function revalidateSchemaAndCrm() {

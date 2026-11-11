@@ -1,6 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { verifyActiveSession } from "@/lib/supabase/auth-guard";
 import { buildBillingSnapshot, type BillingSnapshot } from "@/lib/crm/quotes";
 import {
   recordOutboundEmailAndActivity,
@@ -20,14 +20,11 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Sesión no iniciada" }, { status: 401 });
+    const session = await verifyActiveSession();
+    if (!session.ok) {
+      return NextResponse.json({ error: session.error }, { status: session.status });
     }
+    const { supabase, user } = session;
 
     const body = (await request.json().catch(() => null)) as
       | {

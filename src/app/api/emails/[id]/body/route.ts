@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { verifyActiveSession } from "@/lib/supabase/auth-guard";
 import { fetchOutlookMessage, OutlookAuthInvalidError } from "@/lib/microsoft/graph";
 
 export const dynamic = "force-dynamic";
@@ -9,14 +9,11 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  const session = await verifyActiveSession();
+  if (!session.ok) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
   }
+  const { supabase, user } = session;
 
   const { data: emailRow, error } = await supabase
     .from("emails")

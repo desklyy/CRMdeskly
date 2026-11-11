@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { requireActiveUser } from "@/lib/supabase/auth-guard";
 import { logUserActivity } from "@/lib/crm/activities";
 import {
   recordOutboundEmailAndActivity,
@@ -27,12 +27,7 @@ import type { ActivityEntityType, Database } from "@/types/database";
 type CalendarLinkRow = Database["public"]["Tables"]["calendar_event_links"]["Row"];
 
 async function requireUser() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Sesión no iniciada");
-  return { supabase, user };
+  return requireActiveUser();
 }
 
 export async function sendDealEmailAction(input: {

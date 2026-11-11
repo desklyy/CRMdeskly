@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { verifyActiveSession } from "@/lib/supabase/auth-guard";
 import { signOAuthState } from "@/lib/security/crypto";
 import { getMicrosoftAuthUrl, isMicrosoftConfigured } from "@/lib/microsoft/graph";
 
@@ -11,16 +11,12 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/settings?outlook=missing_config`);
   }
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  const session = await verifyActiveSession();
+  if (!session.ok) {
     return NextResponse.redirect(`${origin}/login`);
   }
 
-  const state = signOAuthState(user.id);
+  const state = signOAuthState(session.user.id);
   const authUrl = getMicrosoftAuthUrl(state);
   return NextResponse.redirect(authUrl);
 }

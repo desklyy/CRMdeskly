@@ -15,13 +15,11 @@ function getEncryptionKey(): Buffer {
   return crypto.createHash("sha256").update(raw).digest();
 }
 
-function getSigningSecret(): string {
-  const secret =
-    process.env.OAUTH_TOKEN_ENCRYPTION_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!secret) {
-    throw new Error("Falta secreto de firma OAuth en variables de entorno.");
-  }
-  return secret;
+function getSigningSecret(): Buffer {
+  return crypto
+    .createHmac("sha256", getEncryptionKey())
+    .update("deskly-oauth-state-signing-v1")
+    .digest();
 }
 
 /**

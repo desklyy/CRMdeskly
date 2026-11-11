@@ -1,24 +1,26 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { verifyActiveSession } from "@/lib/supabase/auth-guard";
 import { buildBillingSnapshot, type BillingSnapshot } from "@/lib/crm/quotes";
 import { renderQuotePdfBuffer } from "@/lib/pdf/quote-pdf";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function sanitizePdfFilename(raw: string): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || "presupuesto";
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  const session = await verifyActiveSession();
+  if (!session.ok) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
   }
+  const { supabase } = session;
 
   const { data: quote, error: quoteErr } = await supabase
     .from("quotes")
@@ -55,11 +57,13 @@ export async function GET(
     billing,
   });
 
+  const safeFilename = sanitizePdfFilename(quote.quote_number);
+
   return new NextResponse(new Uint8Array(pdfBuffer), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${quote.quote_number}.pdf"`,
+      "Content-Disposition": `inline; filename="${safeFilename}.pdf"`,
       "Cache-Control": "no-store",
     },
   });

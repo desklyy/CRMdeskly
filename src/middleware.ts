@@ -47,8 +47,15 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const isPublicPath = PUBLIC_PATHS.some((path) => pathname.startsWith(path));
+  const isJsonApiRoute =
+    pathname.startsWith("/api/") &&
+    !pathname.startsWith("/api/outlook/connect") &&
+    !pathname.startsWith("/api/outlook/callback");
 
   if (!user && !isPublicPath) {
+    if (isJsonApiRoute) {
+      return NextResponse.json({ error: "Sesión no iniciada" }, { status: 401 });
+    }
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     if (pathname !== "/") {
@@ -64,6 +71,12 @@ export async function middleware(request: NextRequest) {
     );
 
     if (!isPublicPath && needsMfa) {
+      if (isJsonApiRoute) {
+        return NextResponse.json(
+          { error: "Verificación en dos pasos (2FA) requerida." },
+          { status: 403 }
+        );
+      }
       const mfaUrl = request.nextUrl.clone();
       mfaUrl.pathname = "/login";
       mfaUrl.searchParams.set("mfa", "required");
