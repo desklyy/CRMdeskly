@@ -29,6 +29,11 @@ export default async function CrmLayout({
     redirect("/login");
   }
 
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    redirect("/login?mfa=required");
+  }
+
   const [{ data: profile }, { data: oauthConn }] = await Promise.all([
     supabase
       .from("profiles")

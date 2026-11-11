@@ -5,6 +5,7 @@ import { TeamSettings } from "@/components/settings/team-settings";
 import { PipelineBuilder } from "@/components/settings/pipeline-builder";
 import { FieldsManager } from "@/components/settings/fields-manager";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
+import { MfaSettings } from "@/components/settings/mfa-settings";
 import {
   ApiKeysSettings,
   type ApiKeyPublicRow,
@@ -25,7 +26,13 @@ type OAuthConnectionPublic = Pick<
   | "updated_at"
 >;
 
-type SettingsTab = "team" | "pipelines" | "fields" | "integrations" | "api_keys";
+type SettingsTab =
+  | "team"
+  | "pipelines"
+  | "fields"
+  | "integrations"
+  | "security"
+  | "api_keys";
 
 interface SettingsViewProps {
   currentUserId: string;
@@ -64,6 +71,7 @@ export function SettingsView({
     { key: "pipelines", label: "Embudos y Etapas", adminOnly: true },
     { key: "fields", label: "Variables / Propiedades" },
     { key: "integrations", label: "Integraciones (Outlook)" },
+    { key: "security", label: "Seguridad (2FA)" },
     { key: "api_keys", label: "API Keys (IA)", adminOnly: true },
   ];
 
@@ -120,6 +128,8 @@ export function SettingsView({
           outlookReason={outlookReason}
         />
       )}
+
+      {activeTab === "security" && <MfaSettings />}
 
       {activeTab === "api_keys" && isAdmin && (
         <ApiKeysSettings initialKeys={apiKeys} />

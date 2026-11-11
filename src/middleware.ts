@@ -57,10 +57,27 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user && pathname === "/login") {
-    const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
-    return NextResponse.redirect(homeUrl);
+  if (user) {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    const needsMfa = Boolean(
+      aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2"
+    );
+
+    if (!isPublicPath && needsMfa) {
+      const mfaUrl = request.nextUrl.clone();
+      mfaUrl.pathname = "/login";
+      mfaUrl.searchParams.set("mfa", "required");
+      if (pathname !== "/") {
+        mfaUrl.searchParams.set("next", pathname);
+      }
+      return NextResponse.redirect(mfaUrl);
+    }
+
+    if (pathname === "/login" && !needsMfa) {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      return NextResponse.redirect(homeUrl);
+    }
   }
 
   return response;
