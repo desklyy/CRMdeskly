@@ -8,6 +8,7 @@ import { buildBillingSnapshot, type BillingSnapshot } from "@/lib/crm/quotes";
 import {
   appendSignatureToHtmlBody,
   buildOperationalQuestionnaireEmail,
+  buildQuoteEmailHtml,
   sanitizeSignatureHtml,
 } from "@/lib/email/templates";
 import { renderQuotePdfBuffer } from "@/lib/pdf/quote-pdf";
@@ -162,6 +163,18 @@ export async function sendDealEmailAction(input: {
 
   let quoteNumberForLog: string | null = null;
   let syncedBaseAmount: number | null = null;
+  let quoteEmailHtml: string | null = null;
+  let quoteTextPreview: string | null = null;
+
+  let personalSignature: string | null = null;
+  if (input.includeSignature !== false) {
+    const { data: profileSig } = await supabase
+      .from("profiles")
+      .select("email_signature")
+      .eq("id", user.id)
+      .maybeSingle();
+    personalSignature = profileSig?.email_signature ?? null;
+  }
 
   if (input.quoteId) {
     const { data: quote } = await supabase
@@ -172,6 +185,7 @@ export async function sendDealEmailAction(input: {
 
     if (!quote) return { error: "Presupuesto no encontrado." };
 
+    const targetContactId = quote.contact_id ?? input.contactId;
     const [itemsRes, dealRes, companyRes, contactRes] = await Promise.all([
       supabase
         .from("quote_items")
@@ -182,18 +196,19 @@ export async function sendDealEmailAction(input: {
       quote.company_id
         ? supabase.from("companies").select("*").eq("id", quote.company_id).maybeSingle()
         : Promise.resolve({ data: null }),
-      quote.contact_id
-        ? supabase.from("contacts").select("*").eq("id", quote.contact_id).maybeSingle()
+      targetContactId
+        ? supabase.from("contacts").select("*").eq("id", targetContactId).maybeSingle()
         : Promise.resolve({ data: null }),
     ]);
 
     const billing = (quote.billing_snapshot ??
       buildBillingSnapshot(companyRes.data, contactRes.data)) as unknown as BillingSnapshot;
 
+    const dealTitle = dealRes.data?.title ?? "Presupuesto";
     const pdfBuffer = await renderQuotePdfBuffer({
       quote,
       items: itemsRes.data ?? [],
-      dealTitle: dealRes.data?.title ?? "Presupuesto",
+      dealTitle,
       billing,
     });
 
@@ -213,6 +228,23 @@ export async function sendDealEmailAction(input: {
       })
       .eq("id", quote.id);
 
+    const builtQuoteEmail = buildQuoteEmailHtml({
+      firstName: contactRes.data?.first_name ?? null,
+      quoteNumber: quote.quote_number,
+      dealTitle,
+      companyName: companyRes.data?.name ?? billing.company_name ?? null,
+      items: itemsRes.data ?? [],
+      subtotal: Number(quote.subtotal ?? 0),
+      discountTotal: Number(quote.discount_total ?? 0),
+      taxTotal: Number(quote.tax_total ?? 0),
+      totalAmount: Number(quote.total_amount ?? 0),
+      validUntil: quote.valid_until,
+      terms: quote.terms,
+      personalSignatureHtml: personalSignature,
+    });
+    quoteEmailHtml = builtQuoteEmail.htmlBody;
+    quoteTextPreview = builtQuoteEmail.textPreview;
+
     quoteNumberForLog = quote.quote_number;
     syncedBaseAmount =
       Math.round((quote.subtotal - quote.discount_total) * 100) / 100;
@@ -223,16 +255,8 @@ export async function sendDealEmailAction(input: {
     .map((line) => `<p>${line.replace(/</g, "&lt;").replace(/>/g, "&gt;") || "&nbsp;"}</p>`)
     .join("");
 
-  let htmlBody = rawHtmlBody;
-  if (input.includeSignature !== false) {
-    const { data: profileSig } = await supabase
-      .from("profiles")
-      .select("email_signature")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    htmlBody = appendSignatureToHtmlBody(rawHtmlBody, profileSig?.email_signature);
-  }
+  const htmlBody =
+    quoteEmailHtml ?? appendSignatureToHtmlBody(rawHtmlBody, personalSignature);
 
   try {
     await sendOutlookMail(user.id, {
@@ -256,7 +280,7 @@ export async function sendDealEmailAction(input: {
     microsoftEmail: outlook.microsoftEmail,
     toEmail,
     subject: input.subject.trim(),
-    preview: stripHtml(rawHtmlBody),
+    preview: quoteTextPreview ?? stripHtml(rawHtmlBody),
     hasAttachments: attachments.length > 0,
     contactId: input.contactId,
     companyId: input.companyId,

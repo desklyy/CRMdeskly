@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { FileDown, Mail, Plus, Trash2 } from "lucide-react";
+import { Eye, FileDown, Mail, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { calculateQuoteTotals, type QuoteItemInput } from "@/lib/crm/quotes";
 import { formatCurrencyEUR } from "@/lib/crm/custom-fields";
+import { buildQuoteEmailHtml } from "@/lib/email/templates";
 import {
   saveQuoteAction,
   updateQuoteStatusAction,
@@ -17,8 +18,11 @@ import type { QuoteStatus } from "@/types/database";
 
 interface QuoteBuilderProps {
   dealId: string;
+  dealTitle?: string | null;
   companyId: string | null;
+  companyName?: string | null;
   contactId: string | null;
+  contactFirstName?: string | null;
   contactEmail?: string | null;
   emailSignature?: string | null;
   quotes: QuoteWithItems[];
@@ -48,8 +52,11 @@ const EMPTY_ITEM: QuoteItemInput = {
 
 export function QuoteBuilder({
   dealId,
+  dealTitle,
   companyId,
+  companyName,
   contactId,
+  contactFirstName,
   contactEmail,
   emailSignature,
   quotes,
@@ -67,8 +74,70 @@ export function QuoteBuilder({
   const [sendingQuoteId, setSendingQuoteId] = useState<string | null>(null);
   const [sendFeedback, setSendFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [previewState, setPreviewState] = useState<{
+    subject: string;
+    htmlBody: string;
+    savedQuote?: QuoteWithItems;
+  } | null>(null);
 
   const liveTotals = useMemo(() => calculateQuoteTotals(items), [items]);
+
+  function openPreviewSavedQuote(q: QuoteWithItems) {
+    const built = buildQuoteEmailHtml({
+      firstName: contactFirstName ?? null,
+      quoteNumber: q.quote_number,
+      dealTitle: dealTitle ?? "Presupuesto",
+      companyName: companyName ?? null,
+      items: q.items ?? [],
+      subtotal: Number(q.subtotal ?? 0),
+      discountTotal: Number(q.discount_total ?? 0),
+      taxTotal: Number(q.tax_total ?? 0),
+      totalAmount: Number(q.total_amount ?? 0),
+      validUntil: q.valid_until,
+      terms: q.terms,
+      personalSignatureHtml: includeSignature ? emailSignature : null,
+    });
+    setPreviewState({
+      subject: `Presupuesto ${q.quote_number}`,
+      htmlBody: built.htmlBody,
+      savedQuote: q,
+    });
+  }
+
+  function openPreviewDraft() {
+    const cleanItems = liveTotals.items.map((it) => ({
+      concept: it.concept || "(Sin concepto)",
+      description: it.description,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      discount_percent: it.discount_percent,
+      tax_rate: it.tax_rate,
+      line_total: it.line_total,
+    }));
+    const existingQuote = editingQuoteId
+      ? quotes.find((q) => q.id === editingQuoteId)
+      : undefined;
+    const refLabel = existingQuote?.quote_number ?? "BORRADOR";
+    const built = buildQuoteEmailHtml({
+      firstName: contactFirstName ?? null,
+      quoteNumber: refLabel,
+      dealTitle: dealTitle ?? "Presupuesto",
+      companyName: companyName ?? null,
+      items: cleanItems,
+      subtotal: liveTotals.subtotal,
+      discountTotal: liveTotals.discount_total,
+      taxTotal: liveTotals.tax_total,
+      totalAmount: liveTotals.total_amount,
+      validUntil: validUntil || null,
+      terms: terms || null,
+      personalSignatureHtml: includeSignature ? emailSignature : null,
+    });
+    setPreviewState({
+      subject: `Presupuesto ${refLabel} (vista previa borrador)`,
+      htmlBody: built.htmlBody,
+      savedQuote: existingQuote,
+    });
+  }
 
   function startNewQuote() {
     setEditingQuoteId(null);
@@ -238,7 +307,16 @@ export function QuoteBuilder({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openPreviewSavedQuote(q)}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      Vista previa
+                    </Button>
                     <a
                       href={`/api/quotes/${q.id}/pdf`}
                       target="_blank"
@@ -533,11 +611,89 @@ export function QuoteBuilder({
                 Total: {formatCurrencyEUR(liveTotals.total_amount)}
               </p>
             </div>
-            <Button type="submit" size="sm" disabled={saving}>
-              {saving ? "Guardando..." : "Guardar presupuesto"}
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button type="button" size="sm" variant="outline" onClick={openPreviewDraft}>
+                <Eye className="h-3.5 w-3.5" />
+                Vista previa
+              </Button>
+              <Button type="submit" size="sm" disabled={saving}>
+                {saving ? "Guardando..." : "Guardar presupuesto"}
+              </Button>
+            </div>
           </div>
         </form>
+      )}
+
+      {/* Email Preview Modal */}
+      {previewState && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/45 p-4"
+          onClick={() => setPreviewState(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-[4px] border border-[#E2E8F0] bg-white"
+          >
+            <div className="flex items-center justify-between border-b border-[#E2E8F0] px-5 py-3.5">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-[#0F172A]">
+                  Vista previa del email de presupuesto
+                </p>
+                <p className="truncate text-[11px] text-[#64748B]">
+                  Asunto: {previewState.subject} · Para:{" "}
+                  {contactEmail || "se solicitará al enviar"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewState(null)}
+                className="rounded p-1 text-[#64748B] hover:bg-slate-100 hover:text-[#0F172A]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto bg-[#F8FAFC] p-4">
+              <iframe
+                title="Vista previa del presupuesto"
+                sandbox=""
+                srcDoc={previewState.htmlBody}
+                className="h-[520px] w-full rounded-[4px] border border-[#E2E8F0] bg-white"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2 border-t border-[#E2E8F0] px-5 py-3">
+              <span className="text-[11px] text-[#64748B]">
+                Además del cuerpo HTML, el cliente recibirá el PDF desglosado adjunto.
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPreviewState(null)}
+                >
+                  Cerrar
+                </Button>
+                {previewState.savedQuote && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={sendingQuoteId === previewState.savedQuote.id}
+                    onClick={async () => {
+                      const q = previewState.savedQuote!;
+                      setPreviewState(null);
+                      await handleSendByOutlook(q);
+                    }}
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    Enviar por Outlook
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

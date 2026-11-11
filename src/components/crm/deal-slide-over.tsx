@@ -620,8 +620,18 @@ export function DealSlideOver({
       {tab === "quotes" && (
         <QuoteBuilder
           dealId={deal.id}
+          dealTitle={deal.title}
           companyId={deal.company_id}
+          companyName={
+            linkedCompany?.name ??
+            companies.find((c) => c.id === deal.company_id)?.name ??
+            null
+          }
           contactId={deal.primary_contact_id}
+          contactFirstName={
+            contacts.find((c) => c.id === deal.primary_contact_id)?.first_name ??
+            null
+          }
           contactEmail={primaryContactEmail}
           emailSignature={mySignature}
           quotes={quotes}
